@@ -23,12 +23,12 @@ defmodule PhoenixFlags.Entry do
   @primary_key {:id, :binary_id, autogenerate: true}
 
   schema "system_flags" do
-    field :key, :string
-    field :value, :string
-    field :type, :string
-    field :category, :string
-    field :label, :string
-    field :description, :string
+    field(:key, :string)
+    field(:value, :string)
+    field(:type, :string)
+    field(:category, :string)
+    field(:label, :string)
+    field(:description, :string)
 
     timestamps(type: :utc_datetime)
   end
@@ -51,7 +51,9 @@ defmodule PhoenixFlags.Entry do
   end
 
   defp validate_value(changeset, "boolean", value) when value in ["true", "false"], do: changeset
-  defp validate_value(changeset, "boolean", _), do: add_error(changeset, :value, "must be true or false")
+
+  defp validate_value(changeset, "boolean", _),
+    do: add_error(changeset, :value, "must be true or false")
 
   defp validate_value(changeset, "integer", value) do
     case Integer.parse(value) do
@@ -70,7 +72,8 @@ defmodule PhoenixFlags.Entry do
   defp validate_value(changeset, "percentage", value) do
     case Decimal.parse(value) do
       {decimal, ""} ->
-        if Decimal.compare(decimal, 0) in [:gt, :eq] and Decimal.compare(decimal, 100) in [:lt, :eq] do
+        if Decimal.compare(decimal, 0) in [:gt, :eq] and
+             Decimal.compare(decimal, 100) in [:lt, :eq] do
           changeset
         else
           add_error(changeset, :value, "must be between 0 and 100")

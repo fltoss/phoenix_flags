@@ -32,6 +32,9 @@ defmodule PhoenixFlags.MixProject do
 
   defp deps do
     [
+      {:usage_rules, "~> 1.0", only: [:dev]},
+      {:quokka, "~> 2.0", only: [:dev, :test], runtime: false},
+      {:credo, "~> 1.0", only: [:dev, :test], runtime: false},
       {:ecto_sql, "~> 3.10"},
       {:decimal, "~> 2.0"},
       {:jason, "~> 1.4"},
@@ -50,7 +53,8 @@ defmodule PhoenixFlags.MixProject do
   defp package do
     [
       licenses: ["MIT"],
-      links: %{"GitHub" => @source_url}
+      links: %{"GitHub" => @source_url},
+      files: ~w(lib usage-rules.md .formatter.exs mix.exs README.md CHANGELOG.md LICENSE)
     ]
   end
 

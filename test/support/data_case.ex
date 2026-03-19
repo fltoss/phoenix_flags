@@ -6,8 +6,8 @@ defmodule PhoenixFlags.DataCase do
 
   using do
     quote do
-      alias PhoenixFlags.TestRepo
       alias PhoenixFlags.TestConfig
+      alias PhoenixFlags.TestRepo
     end
   end
 

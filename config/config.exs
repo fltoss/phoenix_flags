@@ -1,6 +1,8 @@
 import Config
 
 if config_env() == :test do
+  config :logger, level: :warning
+
   config :phoenix_flags, PhoenixFlags.TestRepo,
     username: System.get_env("POSTGRES_USER", "postgres"),
     password: System.get_env("POSTGRES_PASSWORD", "postgres"),
@@ -10,6 +12,4 @@ if config_env() == :test do
     pool_size: System.schedulers_online() * 2
 
   config :phoenix_flags, ecto_repos: [PhoenixFlags.TestRepo]
-
-  config :logger, level: :warning
 end

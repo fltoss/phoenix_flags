@@ -45,13 +45,45 @@ defmodule PhoenixFlags do
     on all connected nodes — no PubSub dependency
   """
 
+  @doc """
+  Declares a flag. Validated at compile time.
+
+      flag "enable_benefits",
+        type: :boolean,
+        default: "false",
+        category: "integrations",
+        label: "Enable Benefits",
+        description: "When enabled, the Benefits integration is active."
+  """
+  defmacro flag(key, opts) do
+    quote do
+      @phoenix_flags PhoenixFlags.Flag.new!(
+                       Keyword.merge(unquote(opts), key: unquote(key))
+                     )
+    end
+  end
+
+  @doc false
+  defmacro __before_compile__(_env) do
+    quote do
+      @doc """
+      Returns the list of declared flags. Generated from `flag/2` macro calls.
+      """
+      def flags do
+        @phoenix_flags |> Enum.reverse()
+      end
+    end
+  end
+
   @doc false
   defmacro __using__(opts) do
     test_module = Module.concat([__CALLER__.module, Test])
 
     quote location: :keep do
-      @otp_app unquote(opts)[:otp_app] || raise(ArgumentError, "missing :otp_app option for use PhoenixFlags")
-      @repo unquote(opts)[:repo] || raise(ArgumentError, "missing :repo option for use PhoenixFlags")
+      @otp_app unquote(opts)[:otp_app] ||
+                 raise(ArgumentError, "missing :otp_app option for use PhoenixFlags")
+      @repo unquote(opts)[:repo] ||
+              raise(ArgumentError, "missing :repo option for use PhoenixFlags")
 
       @doc false
       def child_spec(runtime_opts \\ []) do
@@ -92,6 +124,12 @@ defmodule PhoenixFlags do
       def all_grouped do
         PhoenixFlags.Server.all_grouped(__MODULE__)
       end
+
+      import PhoenixFlags, only: [flag: 2]
+
+      Module.register_attribute(__MODULE__, :phoenix_flags, accumulate: true)
+
+      @before_compile PhoenixFlags
 
       defoverridable child_spec: 1
 
