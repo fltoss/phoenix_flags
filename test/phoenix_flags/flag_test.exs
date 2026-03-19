@@ -45,9 +45,33 @@ defmodule PhoenixFlags.FlagTest do
     end
 
     test "creates a valid select flag" do
-      flag = Flag.new!(key: "provider", type: :select, default: "ses")
+      flag =
+        Flag.new!(
+          key: "provider",
+          type: :select,
+          default: "ses",
+          options: [{"Mailjet", "mailjet"}, {"Amazon SES", "ses"}]
+        )
 
       assert flag.type == :select
+      assert flag.options == [{"Mailjet", "mailjet"}, {"Amazon SES", "ses"}]
+    end
+
+    test "raises on select without options" do
+      assert_raise PhoenixFlags.Error, ~r/options is required/, fn ->
+        Flag.new!(key: "provider", type: :select, default: "ses")
+      end
+    end
+
+    test "raises on select default not in options" do
+      assert_raise PhoenixFlags.Error, ~r/not in :options/, fn ->
+        Flag.new!(
+          key: "provider",
+          type: :select,
+          default: "invalid",
+          options: [{"Mailjet", "mailjet"}]
+        )
+      end
     end
 
     test "raises on missing key" do

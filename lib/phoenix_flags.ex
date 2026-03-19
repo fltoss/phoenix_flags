@@ -70,6 +70,16 @@ defmodule PhoenixFlags do
       def flags do
         @phoenix_flags |> Enum.reverse()
       end
+
+      @doc """
+      Returns `{label, value}` options for a `:select` flag, or `[]` if not a select.
+      """
+      def select_options(key) do
+        case Enum.find(flags(), &(&1.key == key)) do
+          %PhoenixFlags.Flag{options: options} when is_list(options) -> options
+          _ -> []
+        end
+      end
     end
   end
 

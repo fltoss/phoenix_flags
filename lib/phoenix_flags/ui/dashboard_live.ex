@@ -116,6 +116,7 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
                 entry={entry}
                 form={@forms[entry.key]}
                 editing={@editing_key == entry.key}
+                select_options={@config_module.select_options(entry.key)}
               />
             </div>
           </div>

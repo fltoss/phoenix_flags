@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-03-19
+
+### Added
+
+- `:options` field on `Flag` struct for `:select` type — a list of `{label, value}` tuples
+- Compile-time validation that `:select` flags must provide `:options`
+- Compile-time validation that `:select` default value must be in the `:options` list
+
 ## [0.2.0] - 2026-03-19
 
 ### Added

@@ -6,6 +6,7 @@ if Code.ensure_loaded?(Phoenix.Component) do
     attr :entry, :map, required: true
     attr :form, :map, required: true
     attr :editing, :boolean, required: true
+    attr :select_options, :list, default: []
 
     def config_row(%{entry: %{type: "boolean"}} = assigns) do
       ~H"""
@@ -55,7 +56,7 @@ if Code.ensure_loaded?(Phoenix.Component) do
           </p>
         </div>
         <div class="flex items-center gap-4">
-          <span class="text-sm font-semibold text-base-content">{display_value(@entry)}</span>
+          <span class="text-sm font-semibold text-base-content">{display_value(@entry, @select_options)}</span>
           <button
             phx-click="pf-edit"
             phx-value-key={@entry.key}
@@ -79,7 +80,7 @@ if Code.ensure_loaded?(Phoenix.Component) do
                 {@entry.description}
               </p>
               <div class="max-w-xs">
-                <.config_input entry={@entry} form={@form} />
+                <.config_input entry={@entry} form={@form} select_options={@select_options} />
               </div>
             </div>
             <div class="flex gap-2 pt-6">
@@ -122,6 +123,22 @@ if Code.ensure_loaded?(Phoenix.Component) do
       """
     end
 
+    defp config_input(%{entry: %{type: "select"}} = assigns) do
+      ~H"""
+      <div>
+        <select
+          name="entry[value]"
+          class={["select select-bordered select-sm w-full", @form[:value].errors != [] && "select-error"]}
+        >
+          <option :for={{label, value} <- @select_options} value={value} selected={value == @form[:value].value}>
+            {label}
+          </option>
+        </select>
+        <.field_errors errors={@form[:value].errors} />
+      </div>
+      """
+    end
+
     defp config_input(assigns) do
       ~H"""
       <div>
@@ -142,8 +159,12 @@ if Code.ensure_loaded?(Phoenix.Component) do
       """
     end
 
-    defp display_value(%{type: "percentage", value: value}), do: "#{value}%"
-    defp display_value(%{type: "decimal", value: value}), do: value
-    defp display_value(%{value: value}), do: value
+    defp display_value(%{type: "select", value: value}, options) do
+      Enum.find_value(options, value, fn {label, val} -> if val == value, do: label end)
+    end
+
+    defp display_value(%{type: "percentage", value: value}, _options), do: "#{value}%"
+    defp display_value(%{type: "decimal", value: value}, _options), do: value
+    defp display_value(%{value: value}, _options), do: value
   end
 end

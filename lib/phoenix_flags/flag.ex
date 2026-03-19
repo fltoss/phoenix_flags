@@ -26,10 +26,11 @@ defmodule PhoenixFlags.Flag do
   - `:category` — grouping key for the admin UI (defaults to `"default"`)
   - `:label` — display name (defaults to the key)
   - `:description` — help text for the admin UI
+  - `:options` — for `:select` type, a list of `{label, value}` tuples (e.g. `[{"Mailjet", "mailjet"}]`)
   """
 
   @enforce_keys [:key, :type]
-  defstruct [:key, :type, :description, default: "", category: "default", label: nil]
+  defstruct [:key, :type, :description, :options, default: "", category: "default", label: nil]
 
   @valid_types PhoenixFlags.Type.valid_types()
 
@@ -39,7 +40,8 @@ defmodule PhoenixFlags.Flag do
           default: String.t(),
           category: String.t(),
           label: String.t() | nil,
-          description: String.t() | nil
+          description: String.t() | nil,
+          options: [{String.t(), String.t()}] | nil
         }
 
   @doc """
@@ -58,7 +60,8 @@ defmodule PhoenixFlags.Flag do
 
     validate_key!(flag.key)
     validate_type!(flag.type)
-    validate_default!(flag.type, flag.default)
+    validate_options!(flag.type, flag.options)
+    validate_default!(flag.type, flag.default, flag.options)
 
     flag
   end
@@ -76,12 +79,35 @@ defmodule PhoenixFlags.Flag do
           "PhoenixFlags.Flag :type must be one of #{inspect(@valid_types)}, got: #{inspect(type)}"
   end
 
-  defp validate_default!(type, "") when type in [:integer, :decimal, :percentage] do
+  defp validate_options!(:select, nil) do
+    raise PhoenixFlags.Error,
+          "PhoenixFlags.Flag :options is required for :select type (e.g. options: [{\"Label\", \"value\"}])"
+  end
+
+  defp validate_options!(:select, options) when is_list(options) do
+    unless Enum.all?(options, &match?({_, _}, &1)) do
+      raise PhoenixFlags.Error,
+            "PhoenixFlags.Flag :options must be a list of {label, value} tuples, got: #{inspect(options)}"
+    end
+  end
+
+  defp validate_options!(_type, _options), do: :ok
+
+  defp validate_default!(type, "", _options) when type in [:integer, :decimal, :percentage] do
     raise PhoenixFlags.Error,
           "PhoenixFlags.Flag :default is required for :#{type} flags (e.g. default: \"0\")"
   end
 
-  defp validate_default!(type, value) do
+  defp validate_default!(:select, value, options) do
+    allowed = Enum.map(options || [], &elem(&1, 1))
+
+    unless value in allowed do
+      raise PhoenixFlags.Error,
+            "PhoenixFlags.Flag default #{inspect(value)} is not in :options #{inspect(allowed)}"
+    end
+  end
+
+  defp validate_default!(type, value, _options) do
     case PhoenixFlags.Type.validate_value(Atom.to_string(type), value) do
       :ok -> :ok
       {:error, message} -> raise PhoenixFlags.Error, "PhoenixFlags.Flag default for :#{type} #{message}, got: #{inspect(value)}"
