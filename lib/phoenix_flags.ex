@@ -81,9 +81,9 @@ defmodule PhoenixFlags do
       import PhoenixFlags, only: [flag: 2]
 
       @otp_app unquote(opts)[:otp_app] ||
-                 raise(ArgumentError, "missing :otp_app option for use PhoenixFlags")
+                 raise(PhoenixFlags.Error, "missing :otp_app option for use PhoenixFlags")
       @repo unquote(opts)[:repo] ||
-              raise(ArgumentError, "missing :repo option for use PhoenixFlags")
+              raise(PhoenixFlags.Error, "missing :repo option for use PhoenixFlags")
 
       @doc false
       def child_spec(runtime_opts \\ []) do
@@ -113,9 +113,11 @@ defmodule PhoenixFlags do
 
       @doc """
       Updates a config entry and refreshes the cache across the cluster.
+
+      Accepts an optional `:timeout` (in milliseconds, default `5000`).
       """
-      def update_entry(key, attrs) do
-        PhoenixFlags.Server.update_entry(__MODULE__, key, attrs)
+      def update_entry(key, attrs, opts \\ []) do
+        PhoenixFlags.Server.update_entry(__MODULE__, key, attrs, opts)
       end
 
       @doc """

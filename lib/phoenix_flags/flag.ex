@@ -20,7 +20,8 @@ defmodule PhoenixFlags.Flag do
   ## Fields
 
   - `:key` (required) — unique identifier for this flag
-  - `:type` (required) — one of `:boolean`, `:string`, `:integer`, `:decimal`, `:percentage`, `:select`
+  - `:type` (required) — one of `:boolean`, `:string`, `:integer`, `:decimal`, `:percentage`, `:select`.
+    Stored as atoms in declarations, converted to strings (`"boolean"`, etc.) for database storage.
   - `:default` — default value as a string (defaults to `""`)
   - `:category` — grouping key for the admin UI (defaults to `"default"`)
   - `:label` — display name (defaults to the key)
@@ -30,7 +31,7 @@ defmodule PhoenixFlags.Flag do
   @enforce_keys [:key, :type]
   defstruct [:key, :type, :description, default: "", category: "default", label: nil]
 
-  @valid_types ~w(boolean string integer decimal percentage select)a
+  @valid_types PhoenixFlags.Type.valid_types()
 
   @type t :: %__MODULE__{
           key: String.t(),
@@ -44,10 +45,15 @@ defmodule PhoenixFlags.Flag do
   @doc """
   Creates a new flag struct, validating all fields.
 
-  Raises `ArgumentError` on invalid input.
+  Raises `PhoenixFlags.Error` on invalid input.
   """
   def new!(opts) when is_list(opts) do
-    flag = struct!(__MODULE__, opts)
+    flag =
+      try do
+        struct!(__MODULE__, opts)
+      rescue
+        e in ArgumentError -> raise PhoenixFlags.Error, Exception.message(e)
+      end
 
     validate_key!(flag.key)
     validate_type!(flag.type)
@@ -59,63 +65,27 @@ defmodule PhoenixFlags.Flag do
   defp validate_key!(key) when is_binary(key) and byte_size(key) > 0, do: :ok
 
   defp validate_key!(key) do
-    raise ArgumentError, "PhoenixFlags.Flag :key must be a non-empty string, got: #{inspect(key)}"
+    raise PhoenixFlags.Error, "PhoenixFlags.Flag :key must be a non-empty string, got: #{inspect(key)}"
   end
 
   defp validate_type!(type) when type in @valid_types, do: :ok
 
   defp validate_type!(type) do
-    raise ArgumentError,
+    raise PhoenixFlags.Error,
           "PhoenixFlags.Flag :type must be one of #{inspect(@valid_types)}, got: #{inspect(type)}"
   end
 
-  defp validate_default!(:boolean, value) when value in ["true", "false"], do: :ok
-
-  defp validate_default!(:boolean, value) do
-    raise ArgumentError,
-          "PhoenixFlags.Flag default for :boolean must be \"true\" or \"false\", got: #{inspect(value)}"
+  defp validate_default!(type, "") when type in [:integer, :decimal, :percentage] do
+    raise PhoenixFlags.Error,
+          "PhoenixFlags.Flag :default is required for :#{type} flags (e.g. default: \"0\")"
   end
 
-  defp validate_default!(:integer, value) do
-    case Integer.parse(value) do
-      {_, ""} ->
-        :ok
-
-      _ ->
-        raise ArgumentError,
-              "PhoenixFlags.Flag default for :integer must be a valid integer string, got: #{inspect(value)}"
+  defp validate_default!(type, value) do
+    case PhoenixFlags.Type.validate_value(Atom.to_string(type), value) do
+      :ok -> :ok
+      {:error, message} -> raise PhoenixFlags.Error, "PhoenixFlags.Flag default for :#{type} #{message}, got: #{inspect(value)}"
     end
   end
-
-  defp validate_default!(:decimal, value) do
-    case Decimal.parse(value) do
-      {_, ""} ->
-        :ok
-
-      _ ->
-        raise ArgumentError,
-              "PhoenixFlags.Flag default for :decimal must be a valid decimal string, got: #{inspect(value)}"
-    end
-  end
-
-  defp validate_default!(:percentage, value) do
-    case Decimal.parse(value) do
-      {decimal, ""} ->
-        if Decimal.compare(decimal, 0) in [:gt, :eq] and
-             Decimal.compare(decimal, 100) in [:lt, :eq] do
-          :ok
-        else
-          raise ArgumentError,
-                "PhoenixFlags.Flag default for :percentage must be between 0 and 100, got: #{inspect(value)}"
-        end
-
-      _ ->
-        raise ArgumentError,
-              "PhoenixFlags.Flag default for :percentage must be a valid number, got: #{inspect(value)}"
-    end
-  end
-
-  defp validate_default!(_type, _value), do: :ok
 
   @doc false
   def to_seed_map(%__MODULE__{} = flag) do
@@ -128,4 +98,6 @@ defmodule PhoenixFlags.Flag do
       description: flag.description
     }
   end
+
+  def to_seed_map(%{key: _} = map), do: map
 end

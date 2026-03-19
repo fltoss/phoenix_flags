@@ -35,6 +35,7 @@ defmodule PhoenixFlags.MixProject do
       {:ecto_sql, "~> 3.10"},
       {:decimal, "~> 2.0"},
       {:jason, "~> 1.4"},
+      {:phoenix_live_view, "~> 1.0", optional: true},
       {:postgrex, ">= 0.0.0", optional: true},
       {:igniter, "~> 0.5", optional: true},
       {:ex_doc, "~> 0.34", only: :dev, runtime: false},
@@ -53,6 +54,7 @@ defmodule PhoenixFlags.MixProject do
       licenses: ["MIT"],
       links: %{"GitHub" => @source_url},
       files: ~w(lib .formatter.exs mix.exs README.md CHANGELOG.md LICENSE)
+
     ]
   end
 

@@ -54,7 +54,7 @@ defmodule PhoenixFlags.Testing do
     alias PhoenixFlags.Entry
 
     string_value = to_string(value)
-    type = Keyword.get(opts, :type, "boolean")
+    type = Keyword.get_lazy(opts, :type, fn -> infer_type(value) end)
 
     case repo.get_by(Entry, key: key) do
       nil ->
@@ -72,4 +72,9 @@ defmodule PhoenixFlags.Testing do
         |> repo.update!()
     end
   end
+
+  defp infer_type(value) when is_boolean(value), do: "boolean"
+  defp infer_type(value) when is_integer(value), do: "integer"
+  defp infer_type(%Decimal{}), do: "decimal"
+  defp infer_type(_), do: "string"
 end

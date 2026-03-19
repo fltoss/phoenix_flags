@@ -3,8 +3,8 @@ defmodule PhoenixFlags.Migration.V01 do
 
   use Ecto.Migration
 
-  def up(%{prefix: _prefix}) do
-    create table(:system_flags, primary_key: false) do
+  def up(%{prefix: prefix}) do
+    create table(:system_flags, primary_key: false, prefix: prefix) do
       add(:id, :binary_id, primary_key: true)
       add(:key, :string, null: false)
       add(:value, :string)
@@ -16,10 +16,10 @@ defmodule PhoenixFlags.Migration.V01 do
       timestamps(type: :utc_datetime)
     end
 
-    create(unique_index(:system_flags, [:key]))
+    create(unique_index(:system_flags, [:key], prefix: prefix))
   end
 
-  def down(%{prefix: _prefix}) do
-    drop_if_exists(table(:system_flags))
+  def down(%{prefix: prefix}) do
+    drop_if_exists(table(:system_flags, prefix: prefix))
   end
 end

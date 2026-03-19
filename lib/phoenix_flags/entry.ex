@@ -13,7 +13,7 @@ defmodule PhoenixFlags.Entry do
   | `integer`    | `"42"`          | `42`                 | must parse as integer         |
   | `decimal`    | `"3000"`        | `Decimal.new("3000")`| must parse as decimal         |
   | `percentage` | `"50"`          | `Decimal.new("50")`  | 0..100                        |
-  | `select`     | `"ses"`         | `"ses"`              | must be in allowed list       |
+  | `select`     | `"ses"`         | `"ses"`              | none (app-defined)            |
   """
 
   use Ecto.Schema
@@ -47,44 +47,17 @@ defmodule PhoenixFlags.Entry do
     type = get_field(changeset, :type)
     value = get_field(changeset, :value)
 
-    if is_nil(value), do: changeset, else: validate_value(changeset, type, value)
-  end
-
-  defp validate_value(changeset, "boolean", value) when value in ["true", "false"], do: changeset
-
-  defp validate_value(changeset, "boolean", _),
-    do: add_error(changeset, :value, "must be true or false")
-
-  defp validate_value(changeset, "integer", value) do
-    case Integer.parse(value) do
-      {_, ""} -> changeset
-      _ -> add_error(changeset, :value, "must be a whole number")
+    if is_nil(value) do
+      changeset
+    else
+      case PhoenixFlags.Type.validate_value(type, value) do
+        :ok -> changeset
+        {:error, message} -> add_error(changeset, :value, message)
+      end
     end
   end
 
-  defp validate_value(changeset, "decimal", value) do
-    case Decimal.parse(value) do
-      {_, ""} -> changeset
-      _ -> add_error(changeset, :value, "must be a valid number")
-    end
-  end
-
-  defp validate_value(changeset, "percentage", value) do
-    case Decimal.parse(value) do
-      {decimal, ""} ->
-        if Decimal.compare(decimal, 0) in [:gt, :eq] and
-             Decimal.compare(decimal, 100) in [:lt, :eq] do
-          changeset
-        else
-          add_error(changeset, :value, "must be between 0 and 100")
-        end
-
-      _ ->
-        add_error(changeset, :value, "must be a valid number")
-    end
-  end
-
-  defp validate_value(changeset, _type, _value), do: changeset
+  require Logger
 
   @doc """
   Casts a stored string value to its native Elixir type.
@@ -94,15 +67,23 @@ defmodule PhoenixFlags.Entry do
 
   def cast_value(value, "integer") do
     case Integer.parse(value) do
-      {integer, ""} -> integer
-      _ -> nil
+      {integer, ""} ->
+        integer
+
+      _ ->
+        Logger.debug("PhoenixFlags: failed to cast #{inspect(value)} as integer")
+        nil
     end
   end
 
   def cast_value(value, type) when type in ["decimal", "percentage"] do
     case Decimal.parse(value) do
-      {decimal, ""} -> decimal
-      _ -> nil
+      {decimal, ""} ->
+        decimal
+
+      _ ->
+        Logger.debug("PhoenixFlags: failed to cast #{inspect(value)} as #{type}")
+        nil
     end
   end
 

@@ -32,6 +32,7 @@ checks, and a simple API for building admin UIs. One dependency, no external ser
 - **Declarative flags** — define flags in code, auto-seeded on startup, stale flags auto-removed
 - **Cluster-aware** — writes replicate to all connected nodes automatically
 - **Test-friendly** — process dictionary overrides (no DB, no races) + Ecto sandbox helpers
+- **Embedded admin dashboard** — self-contained LiveView UI, mount with one router line
 - **Versioned migrations** — Oban-style migration versioning for schema upgrades
 - **Metadata sync** — label, description, category changes deploy automatically; runtime values preserved
 
@@ -338,67 +339,65 @@ PhoenixFlags.Migration.migrated_version()
 #=> 1
 ```
 
-## Building an Admin UI
+## Admin Dashboard
 
-`all_grouped/0` returns entries grouped by category — everything you need
-for a settings page:
+PhoenixFlags ships a self-contained LiveView dashboard — no dependency on your
+app's components, layouts, or CSS framework. Mount it with a single router line.
+
+### Mounting the Dashboard
+
+```elixir
+defmodule MyAppWeb.Router do
+  use Phoenix.Router
+  import PhoenixFlags.Router
+
+  scope "/admin" do
+    pipe_through [:browser, :require_admin]
+
+    flags_dashboard "/flags", config: MyApp.SystemConfig
+  end
+end
+```
+
+That's it. Visit `/admin/flags` to see all your flags grouped by category with:
+- Toggle switches for booleans
+- Inline edit forms for other types
+- Validation errors displayed on save
+- Flash messages for success/error
+- Dark mode support (via `prefers-color-scheme`)
+
+### Dashboard Options
+
+```elixir
+flags_dashboard "/flags",
+  config: MyApp.SystemConfig,                              # required
+  on_mount: [{MyAppWeb.AdminAuth, :ensure_authenticated}], # auth hooks
+  csp_nonce_assign_key: :csp_nonce                         # CSP support
+```
+
+### How It Works
+
+The dashboard uses the same pattern as Phoenix LiveDashboard:
+
+- **Isolated `live_session`** — won't conflict with your app's layout or sessions
+- **Self-contained root layout** — ships its own HTML shell with inlined CSS
+- **Own component library** — toggle switches, inputs, cards — no dependency on
+  your `CoreComponents` or CSS framework
+- **Dark mode** — respects `prefers-color-scheme` automatically
+- **Session-based config** — the router macro passes your config module through
+  the LiveView session
+
+### Custom UI
+
+If you outgrow the embedded dashboard and want full control over styling, build
+your own LiveView using the data API:
 
 ```elixir
 MyApp.SystemConfig.all_grouped()
-#=> [
-#     {"fees", [%Entry{key: "default_fee_percentage", type: "percentage", ...}]},
-#     {"integrations", [%Entry{key: "enable_benefits", type: "boolean", ...}]},
-#     {"system", [%Entry{key: "max_retries", type: "integer", ...}]}
-#   ]
-```
+#=> [{"integrations", [%Entry{key: "enable_benefits", ...}]}, ...]
 
-### Minimal LiveView Example
-
-```elixir
-defmodule MyAppWeb.SystemConfigLive do
-  use MyAppWeb, :live_view
-
-  def mount(_params, _session, socket) do
-    {:ok, assign(socket, grouped: MyApp.SystemConfig.all_grouped())}
-  end
-
-  def handle_event("toggle", %{"key" => key}, socket) do
-    current = MyApp.SystemConfig.get(key)
-    new_value = if current, do: "false", else: "true"
-
-    case MyApp.SystemConfig.update_entry(key, %{"value" => new_value}) do
-      {:ok, _} ->
-        {:noreply, assign(socket, grouped: MyApp.SystemConfig.all_grouped())}
-      {:error, _} ->
-        {:noreply, put_flash(socket, :error, "Failed to update")}
-    end
-  end
-
-  def render(assigns) do
-    ~H"""
-    <div :for={{category, entries} <- @grouped} class="mb-8">
-      <h2 class="text-sm font-semibold uppercase tracking-wider mb-4">
-        {category}
-      </h2>
-      <div :for={entry <- entries} class="flex items-center justify-between py-4 border-b">
-        <div>
-          <p class="font-medium">{entry.label}</p>
-          <p :if={entry.description} class="text-sm text-gray-500">{entry.description}</p>
-        </div>
-        <button
-          :if={entry.type == "boolean"}
-          phx-click="toggle"
-          phx-value-key={entry.key}
-          class={if entry.value == "true", do: "btn btn-success", else: "btn"}
-        >
-          {if entry.value == "true", do: "Enabled", else: "Disabled"}
-        </button>
-        <span :if={entry.type != "boolean"} class="font-mono">{entry.value}</span>
-      </div>
-    </div>
-    """
-  end
-end
+MyApp.SystemConfig.update_entry("enable_benefits", %{"value" => "true"})
+#=> {:ok, %Entry{...}}
 ```
 
 ## Comparison
@@ -409,7 +408,7 @@ end
 | Typed values | No | Boolean only | 6 types + validation |
 | Caching | N/A (in-memory) | ETS | `:persistent_term` (zero-copy) |
 | Cluster sync | No | Redis/Ecto polling | Direct node messaging |
-| Admin UI data | N/A | No grouping | Grouped by category with labels |
+| Admin UI | N/A | No | Built-in dashboard, one router line |
 | External deps | None | Redis (optional) | None |
 | Compile-time checks | No | No | Yes (`flag/2` macro) |
 | Auto-seeding | No | No | Yes (on startup) |
@@ -431,6 +430,12 @@ end
 |---|---|
 | `put_override(key, value)` | Process-scoped override, no DB |
 | `insert_entry(key, value, opts)` | DB insert/upsert for cross-process tests |
+
+### Router API
+
+| Macro | Description |
+|---|---|
+| `flags_dashboard(path, opts)` | Mount the embedded dashboard LiveView |
 
 ### Migration API
 

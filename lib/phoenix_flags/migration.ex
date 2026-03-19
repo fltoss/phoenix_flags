@@ -90,10 +90,10 @@ defmodule PhoenixFlags.Migration do
     FROM pg_class c
     JOIN pg_namespace n ON n.oid = c.relnamespace
     WHERE c.relname = 'system_flags'
-    AND n.nspname = '#{prefix}'
+    AND n.nspname = $1
     """
 
-    case repo().query(query) do
+    case repo().query(query, [prefix]) do
       {:ok, %{rows: [[version]]}} when is_binary(version) ->
         String.to_integer(version)
 
@@ -105,7 +105,7 @@ defmodule PhoenixFlags.Migration do
   @doc false
   def current_version, do: @current_version
 
-  defp set_version(prefix, version) do
+  defp set_version(prefix, version) when is_integer(version) do
     execute("COMMENT ON TABLE #{prefix}.system_flags IS '#{version}'")
   end
 end

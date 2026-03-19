@@ -51,56 +51,74 @@ defmodule PhoenixFlags.FlagTest do
     end
 
     test "raises on missing key" do
-      assert_raise ArgumentError, ~r/key/, fn ->
+      assert_raise PhoenixFlags.Error, ~r/key/, fn ->
         Flag.new!(type: :boolean, default: "true")
       end
     end
 
     test "raises on empty key" do
-      assert_raise ArgumentError, ~r/non-empty string/, fn ->
+      assert_raise PhoenixFlags.Error, ~r/non-empty string/, fn ->
         Flag.new!(key: "", type: :boolean, default: "true")
       end
     end
 
     test "raises on missing type" do
-      assert_raise ArgumentError, ~r/type/, fn ->
+      assert_raise PhoenixFlags.Error, ~r/type/, fn ->
         Flag.new!(key: "test")
       end
     end
 
     test "raises on invalid type" do
-      assert_raise ArgumentError, ~r/must be one of/, fn ->
+      assert_raise PhoenixFlags.Error, ~r/must be one of/, fn ->
         Flag.new!(key: "test", type: :invalid, default: "x")
       end
     end
 
     test "raises on invalid boolean default" do
-      assert_raise ArgumentError, ~r/must be "true" or "false"/, fn ->
+      assert_raise PhoenixFlags.Error, ~r/must be true or false/, fn ->
         Flag.new!(key: "test", type: :boolean, default: "yes")
       end
     end
 
     test "raises on invalid integer default" do
-      assert_raise ArgumentError, ~r/valid integer/, fn ->
+      assert_raise PhoenixFlags.Error, ~r/must be a whole number/, fn ->
         Flag.new!(key: "test", type: :integer, default: "abc")
       end
     end
 
     test "raises on invalid decimal default" do
-      assert_raise ArgumentError, ~r/valid decimal/, fn ->
+      assert_raise PhoenixFlags.Error, ~r/must be a valid number/, fn ->
         Flag.new!(key: "test", type: :decimal, default: "not-a-number")
       end
     end
 
     test "raises on percentage default out of range" do
-      assert_raise ArgumentError, ~r/between 0 and 100/, fn ->
+      assert_raise PhoenixFlags.Error, ~r/between 0 and 100/, fn ->
         Flag.new!(key: "test", type: :percentage, default: "150")
       end
     end
 
     test "raises on invalid percentage default" do
-      assert_raise ArgumentError, ~r/valid number/, fn ->
+      assert_raise PhoenixFlags.Error, ~r/valid number/, fn ->
         Flag.new!(key: "test", type: :percentage, default: "abc")
+      end
+    end
+
+    test "raises with helpful message when integer flag has no default" do
+      assert_raise PhoenixFlags.Error, ~r/:default is required for :integer/, fn ->
+        Flag.new!(key: "count", type: :integer)
+      end
+    end
+
+    test "raises with helpful message when decimal flag has no default" do
+      assert_raise PhoenixFlags.Error, ~r/:default is required for :decimal/, fn ->
+        Flag.new!(key: "amount", type: :decimal)
+      end
+    end
+
+    test "raises with helpful message when percentage flag has no default" do
+      assert_raise PhoenixFlags.Error, ~r/:default is required for :percentage/, fn ->
+        Flag.new!(key: "rate", type: :percentage)
       end
     end
   end
