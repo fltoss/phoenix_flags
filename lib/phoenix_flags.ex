@@ -57,9 +57,7 @@ defmodule PhoenixFlags do
   """
   defmacro flag(key, opts) do
     quote do
-      @phoenix_flags PhoenixFlags.Flag.new!(
-                       Keyword.merge(unquote(opts), key: unquote(key))
-                     )
+      @phoenix_flags PhoenixFlags.Flag.new!(Keyword.put(unquote(opts), :key, unquote(key)))
     end
   end
 
@@ -80,6 +78,8 @@ defmodule PhoenixFlags do
     test_module = Module.concat([__CALLER__.module, Test])
 
     quote location: :keep do
+      import PhoenixFlags, only: [flag: 2]
+
       @otp_app unquote(opts)[:otp_app] ||
                  raise(ArgumentError, "missing :otp_app option for use PhoenixFlags")
       @repo unquote(opts)[:repo] ||
@@ -124,8 +124,6 @@ defmodule PhoenixFlags do
       def all_grouped do
         PhoenixFlags.Server.all_grouped(__MODULE__)
       end
-
-      import PhoenixFlags, only: [flag: 2]
 
       Module.register_attribute(__MODULE__, :phoenix_flags, accumulate: true)
 

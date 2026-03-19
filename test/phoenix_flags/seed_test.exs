@@ -54,7 +54,13 @@ defmodule PhoenixFlags.SeedTest do
 
       {_module, _config} =
         start_server!([
-          %{key: "existing_flag", type: "boolean", value: "false", category: "test", label: "Existing"}
+          %{
+            key: "existing_flag",
+            type: "boolean",
+            value: "false",
+            category: "test",
+            label: "Existing"
+          }
         ])
 
       entry = TestRepo.get_by(Entry, key: "existing_flag")
@@ -120,7 +126,13 @@ defmodule PhoenixFlags.SeedTest do
 
       {_module, _config} =
         start_server!([
-          %{key: "recategorized", type: "integer", value: "0", category: "new_category", label: "Flag"}
+          %{
+            key: "recategorized",
+            type: "integer",
+            value: "0",
+            category: "new_category",
+            label: "Flag"
+          }
         ])
 
       entry = TestRepo.get_by(Entry, key: "recategorized")
@@ -159,7 +171,13 @@ defmodule PhoenixFlags.SeedTest do
 
       {_module, _config} =
         start_server!([
-          %{key: "int_to_bool", type: "boolean", value: "false", category: "test", label: "Int to Bool"}
+          %{
+            key: "int_to_bool",
+            type: "boolean",
+            value: "false",
+            category: "test",
+            label: "Int to Bool"
+          }
         ])
 
       entry = TestRepo.get_by(Entry, key: "int_to_bool")
@@ -178,7 +196,13 @@ defmodule PhoenixFlags.SeedTest do
 
       {_module, _config} =
         start_server!([
-          %{key: "str_to_pct", type: "percentage", value: "50", category: "test", label: "Str to Pct"}
+          %{
+            key: "str_to_pct",
+            type: "percentage",
+            value: "50",
+            category: "test",
+            label: "Str to Pct"
+          }
         ])
 
       entry = TestRepo.get_by(Entry, key: "str_to_pct")
@@ -223,7 +247,13 @@ defmodule PhoenixFlags.SeedTest do
       {_module, _config} =
         start_server!([
           # Updated metadata
-          %{key: "keep_me", type: "string", value: "default", category: "new", label: "New Label"},
+          %{
+            key: "keep_me",
+            type: "string",
+            value: "default",
+            category: "new",
+            label: "New Label"
+          },
           # New flag
           %{key: "add_me", type: "boolean", value: "true", category: "test", label: "New Flag"}
         ])

@@ -78,29 +78,40 @@ defmodule PhoenixFlags.Flag do
 
   defp validate_default!(:integer, value) do
     case Integer.parse(value) do
-      {_, ""} -> :ok
-      _ -> raise ArgumentError, "PhoenixFlags.Flag default for :integer must be a valid integer string, got: #{inspect(value)}"
+      {_, ""} ->
+        :ok
+
+      _ ->
+        raise ArgumentError,
+              "PhoenixFlags.Flag default for :integer must be a valid integer string, got: #{inspect(value)}"
     end
   end
 
   defp validate_default!(:decimal, value) do
     case Decimal.parse(value) do
-      {_, ""} -> :ok
-      _ -> raise ArgumentError, "PhoenixFlags.Flag default for :decimal must be a valid decimal string, got: #{inspect(value)}"
+      {_, ""} ->
+        :ok
+
+      _ ->
+        raise ArgumentError,
+              "PhoenixFlags.Flag default for :decimal must be a valid decimal string, got: #{inspect(value)}"
     end
   end
 
   defp validate_default!(:percentage, value) do
     case Decimal.parse(value) do
       {decimal, ""} ->
-        if Decimal.compare(decimal, 0) in [:gt, :eq] and Decimal.compare(decimal, 100) in [:lt, :eq] do
+        if Decimal.compare(decimal, 0) in [:gt, :eq] and
+             Decimal.compare(decimal, 100) in [:lt, :eq] do
           :ok
         else
-          raise ArgumentError, "PhoenixFlags.Flag default for :percentage must be between 0 and 100, got: #{inspect(value)}"
+          raise ArgumentError,
+                "PhoenixFlags.Flag default for :percentage must be between 0 and 100, got: #{inspect(value)}"
         end
 
       _ ->
-        raise ArgumentError, "PhoenixFlags.Flag default for :percentage must be a valid number, got: #{inspect(value)}"
+        raise ArgumentError,
+              "PhoenixFlags.Flag default for :percentage must be a valid number, got: #{inspect(value)}"
     end
   end
 

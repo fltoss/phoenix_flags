@@ -191,7 +191,9 @@ defmodule PhoenixFlags.Server do
         |> Ecto.Changeset.change(metadata_changes)
         |> config.repo.update!()
 
-        Logger.info("PhoenixFlags: updated metadata for #{key}: #{inspect(Map.keys(metadata_changes))}")
+        Logger.info(
+          "PhoenixFlags: updated metadata for #{key}: #{inspect(Map.keys(metadata_changes))}"
+        )
       end
     end
 
@@ -207,7 +209,9 @@ defmodule PhoenixFlags.Server do
       |> where([e], e.key in ^keys_list)
       |> config.repo.delete_all()
 
-      Logger.info("PhoenixFlags: removed #{MapSet.size(keys_to_remove)} stale flag(s): #{Enum.join(keys_list, ", ")}")
+      Logger.info(
+        "PhoenixFlags: removed #{MapSet.size(keys_to_remove)} stale flag(s): #{Enum.join(keys_list, ", ")}"
+      )
     end
   rescue
     error ->
