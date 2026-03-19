@@ -14,7 +14,6 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
           live "/system/config", PhoenixFlags.UI.DashboardLive, :index
         end
     """
-    import Phoenix.LiveView
     import Phoenix.Component
 
     def on_mount(config_module, _params, _session, socket) do

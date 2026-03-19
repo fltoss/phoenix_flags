@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-03-19
+
+### Added
+
+- `PhoenixFlags.Error` custom exception for all library-raised errors
+- `PhoenixFlags.Type` shared validation module, eliminating duplicated logic between `Flag` and `Entry`
+- `update_entry/3` now accepts `:timeout` option for GenServer call timeout
+- `Testing.insert_entry/4` infers type from value (boolean, integer, Decimal, string)
+- Helpful error message when numeric flag types omit `:default` (e.g. `flag "x", type: :integer`)
+- Catch-all `handle_info` clause to prevent GenServer crashes from unexpected messages
+- `terminate/2` erases config key on shutdown, signalling "server down" to readers
+- Peer notification after flag seeding, so other nodes pick up changes from deploys
+- Dashboard `:layout` option to render inside the host app's layout
+- `PhoenixFlags.UI.OnMount` hook for mounting dashboard in custom `live_session`
+- Conditional compilation for UI modules (`phoenix_live_view` is truly optional)
+
+### Changed
+
+- `get/3` never crashes — returns default when server is not running or restarting
+- `all_grouped/0` returns `[]` when server is not running
+- Cache stores values and entries in a single atomic `{values, entries}` tuple (one persistent_term key instead of two)
+- Metadata updates during seeding are wrapped in `Repo.transaction` for atomicity
+- `insert_all` uses `on_conflict: :nothing` to handle concurrent node startups gracefully
+- Dashboard uses host app's layout and CSS framework instead of self-contained styles
+- `load_cache` crashes on first load in `init` (supervisor retries), rescues on subsequent reloads
+- Removed dead `:table` config option from `Config` struct
+
+### Fixed
+
+- SQL injection in `Migration.migrated_version/1` — now uses parameterized query
+- Migration V01 now respects the `:prefix` option for table and index creation
+- Narrowed `rescue ArgumentError` in `get/3` to only catch persistent_term lookup failures
+- `cast_value` logs at debug level for unparseable values instead of silently returning nil
+
 ## [0.1.0] - 2026-03-19
 
 ### Added

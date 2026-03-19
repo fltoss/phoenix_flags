@@ -52,7 +52,8 @@ defmodule PhoenixFlags.Flag do
       try do
         struct!(__MODULE__, opts)
       rescue
-        e in ArgumentError -> raise PhoenixFlags.Error, Exception.message(e)
+        e in ArgumentError ->
+          reraise PhoenixFlags.Error, Exception.message(e), __STACKTRACE__
       end
 
     validate_key!(flag.key)

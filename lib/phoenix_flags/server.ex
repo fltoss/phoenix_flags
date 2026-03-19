@@ -30,20 +30,21 @@ defmodule PhoenixFlags.Server do
   """
   def get(instance, key, default \\ nil) do
     case safe_get_config(instance) do
+      {:ok, %{cache_enabled: true}} ->
+        instance |> read_cached_values() |> Map.get(key, default)
+
       {:ok, config} ->
-        if config.cache_enabled do
-          instance
-          |> read_cached_values()
-          |> Map.get(key, default)
-        else
-          case PhoenixFlags.Testing.get_override(instance, key) do
-            {:ok, value} -> value
-            :none -> fallback_read(config, key, default)
-          end
-        end
+        get_uncached(config, instance, key, default)
 
       :error ->
         default
+    end
+  end
+
+  defp get_uncached(config, instance, key, default) do
+    case PhoenixFlags.Testing.get_override(instance, key) do
+      {:ok, value} -> value
+      :none -> fallback_read(config, key, default)
     end
   end
 
@@ -247,28 +248,35 @@ defmodule PhoenixFlags.Server do
           end
       end
 
-    if changesets != [] do
-      case config.repo.transaction(fn ->
-             for {existing, changes} <- changesets do
-               existing
-               |> Ecto.Changeset.change(changes)
-               |> config.repo.update!()
-
-               Logger.info(
-                 "PhoenixFlags: updated metadata for #{existing.key}: #{inspect(Map.keys(changes))}"
-               )
-             end
-           end) do
-        {:ok, _} ->
-          true
-
-        {:error, reason} ->
-          Logger.warning("PhoenixFlags: failed to update flag metadata: #{inspect(reason)}")
-          false
-      end
-    else
+    if changesets == [] do
       false
+    else
+      apply_metadata_updates(config, changesets)
     end
+  end
+
+  defp apply_metadata_updates(config, changesets) do
+    result =
+      config.repo.transaction(fn ->
+        Enum.each(changesets, &apply_single_update(config, &1))
+      end)
+
+    case result do
+      {:ok, _} -> true
+      {:error, reason} ->
+        Logger.warning("PhoenixFlags: failed to update flag metadata: #{inspect(reason)}")
+        false
+    end
+  end
+
+  defp apply_single_update(config, {existing, changes}) do
+    existing
+    |> Ecto.Changeset.change(changes)
+    |> config.repo.update!()
+
+    Logger.info(
+      "PhoenixFlags: updated metadata for #{existing.key}: #{inspect(Map.keys(changes))}"
+    )
   end
 
   defp do_seed_deletes(config, declared_keys, existing_keys) do
