@@ -32,15 +32,13 @@ defmodule PhoenixFlags.MixProject do
 
   defp deps do
     [
-      {:usage_rules, "~> 1.0", only: [:dev]},
-      {:quokka, "~> 2.0", only: [:dev, :test], runtime: false},
-      {:credo, "~> 1.0", only: [:dev, :test], runtime: false},
       {:ecto_sql, "~> 3.10"},
       {:decimal, "~> 2.0"},
       {:jason, "~> 1.4"},
       {:postgrex, ">= 0.0.0", optional: true},
       {:igniter, "~> 0.5", optional: true},
-      {:ex_doc, "~> 0.34", only: :dev, runtime: false}
+      {:ex_doc, "~> 0.34", only: :dev, runtime: false},
+      {:credo, "~> 1.0", only: [:dev, :test], runtime: false}
     ]
   end
 
@@ -54,13 +52,13 @@ defmodule PhoenixFlags.MixProject do
     [
       licenses: ["MIT"],
       links: %{"GitHub" => @source_url},
-      files: ~w(lib usage-rules.md .formatter.exs mix.exs README.md CHANGELOG.md LICENSE)
+      files: ~w(lib .formatter.exs mix.exs README.md CHANGELOG.md LICENSE)
     ]
   end
 
   defp docs do
     [
-      main: "PhoenixFlags",
+      main: "readme",
       source_ref: "v#{@version}",
       extras: ["README.md", "CHANGELOG.md"]
     ]
