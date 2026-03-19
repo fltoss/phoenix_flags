@@ -215,6 +215,73 @@ defmodule PhoenixFlags.ServerTest do
     end
   end
 
+  describe "process isolation" do
+    test "put_override is not visible to other processes" do
+      TestConfig.Test.put_override("isolated_key", :my_value)
+
+      # Verify it's visible in the current process
+      assert TestConfig.get("isolated_key") == :my_value
+
+      # Spawn a task and read from there — should NOT see the override
+      task = Task.async(fn -> TestConfig.get("isolated_key", :not_found) end)
+      assert Task.await(task) == :not_found
+    end
+
+    test "put_override in spawned process is not visible to parent" do
+      task =
+        Task.async(fn ->
+          TestConfig.Test.put_override("child_key", :child_value)
+          TestConfig.get("child_key")
+        end)
+
+      assert Task.await(task) == :child_value
+
+      # Parent process should not see the child's override
+      assert TestConfig.get("child_key", :not_found) == :not_found
+    end
+  end
+
+  describe "insert_entry type inference" do
+    test "infers boolean type" do
+      TestConfig.Test.insert_entry("inferred_bool", true)
+
+      entry = TestRepo.get_by(Entry, key: "inferred_bool")
+      assert entry.type == "boolean"
+      assert TestConfig.get("inferred_bool") == true
+    end
+
+    test "infers integer type" do
+      TestConfig.Test.insert_entry("inferred_int", 42)
+
+      entry = TestRepo.get_by(Entry, key: "inferred_int")
+      assert entry.type == "integer"
+      assert TestConfig.get("inferred_int") == 42
+    end
+
+    test "infers decimal type" do
+      TestConfig.Test.insert_entry("inferred_dec", Decimal.new("9.99"))
+
+      entry = TestRepo.get_by(Entry, key: "inferred_dec")
+      assert entry.type == "decimal"
+      assert TestConfig.get("inferred_dec") == Decimal.new("9.99")
+    end
+
+    test "infers string type for other values" do
+      TestConfig.Test.insert_entry("inferred_str", "hello")
+
+      entry = TestRepo.get_by(Entry, key: "inferred_str")
+      assert entry.type == "string"
+      assert TestConfig.get("inferred_str") == "hello"
+    end
+
+    test "explicit type overrides inference" do
+      TestConfig.Test.insert_entry("explicit_type", "50", type: "percentage")
+
+      entry = TestRepo.get_by(Entry, key: "explicit_type")
+      assert entry.type == "percentage"
+    end
+  end
+
   describe "app-specific helpers" do
     test "benefits_enabled? returns false by default" do
       refute TestConfig.benefits_enabled?()

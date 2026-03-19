@@ -9,7 +9,11 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
 
     @impl true
     def mount(_params, session, socket) do
-      config_module = session["config"]
+      config_module =
+        socket.assigns[:phoenix_flags_config] || session["config"] ||
+          raise PhoenixFlags.Error,
+                "no config module found. Use {PhoenixFlags.UI.OnMount, MyApp.SystemConfig} in on_mount or the flags_dashboard router macro."
+
       layout = session["layout"]
       grouped = config_module.all_grouped()
 

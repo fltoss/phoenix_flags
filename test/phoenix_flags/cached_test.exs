@@ -41,7 +41,7 @@ defmodule PhoenixFlags.CachedTest do
     pid = start_supervised!({PhoenixFlags.Server, config})
 
     on_exit(fn ->
-      for key <- [:cache, :entries, :config] do
+      for key <- [:cache, :config] do
         try do
           :persistent_term.erase({PhoenixFlags, CachedConfig, key})
         rescue
@@ -113,8 +113,9 @@ defmodule PhoenixFlags.CachedTest do
     end
 
     test "reads from persistent_term, not the database" do
-      # Verify entries are in persistent_term
-      entries = :persistent_term.get({PhoenixFlags, CachedConfig, :entries})
+      # Verify cache tuple is in persistent_term
+      {values, entries} = :persistent_term.get({PhoenixFlags, CachedConfig, :cache})
+      assert map_size(values) == 3
       assert length(entries) == 3
 
       # Delete all rows from the DB — cached all_grouped should still work
@@ -142,10 +143,11 @@ defmodule PhoenixFlags.CachedTest do
 
   describe "terminate/2" do
     test "erases config key but preserves cache for graceful degradation" do
-      # All keys exist while running
-      assert :persistent_term.get({PhoenixFlags, CachedConfig, :cache}) |> is_map()
-      assert :persistent_term.get({PhoenixFlags, CachedConfig, :entries}) |> is_list()
-      assert :persistent_term.get({PhoenixFlags, CachedConfig, :config}) |> is_struct()
+      # Keys exist while running
+      {values, entries} = :persistent_term.get({PhoenixFlags, CachedConfig, :cache})
+      assert is_map(values)
+      assert is_list(entries)
+      assert is_struct(:persistent_term.get({PhoenixFlags, CachedConfig, :config}))
 
       stop_supervised!(PhoenixFlags.Server)
 
@@ -154,9 +156,39 @@ defmodule PhoenixFlags.CachedTest do
         :persistent_term.get({PhoenixFlags, CachedConfig, :config})
       end
 
-      # Cache and entries preserved — get/3 can serve stale values during restart
-      assert :persistent_term.get({PhoenixFlags, CachedConfig, :cache}) |> is_map()
-      assert :persistent_term.get({PhoenixFlags, CachedConfig, :entries}) |> is_list()
+      # Cache preserved — get/3 can serve stale values during restart
+      {values, entries} = :persistent_term.get({PhoenixFlags, CachedConfig, :cache})
+      assert is_map(values)
+      assert is_list(entries)
+    end
+  end
+
+  describe "restart recovery" do
+    test "server restart repopulates cache with fresh data" do
+      # Update a value
+      assert {:ok, _} = CachedConfig.update_entry("cached_bool", %{"value" => "false"})
+      assert CachedConfig.get("cached_bool") == false
+
+      # Stop the server
+      stop_supervised!(PhoenixFlags.Server)
+
+      # Restart with same config
+      config = %PhoenixFlags.Config{
+        otp_app: :phoenix_flags,
+        repo: TestRepo,
+        name: CachedConfig,
+        cache_enabled: true
+      }
+
+      start_supervised!({PhoenixFlags.Server, config})
+
+      # Cache should be repopulated from DB — the updated value persists
+      assert CachedConfig.get("cached_bool") == false
+      assert CachedConfig.get("cached_int") == 10
+
+      # all_grouped should also work
+      grouped = CachedConfig.all_grouped()
+      assert [{"alpha", _}, {"beta", _}] = grouped
     end
   end
 

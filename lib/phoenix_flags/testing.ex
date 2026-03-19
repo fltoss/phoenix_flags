@@ -11,7 +11,7 @@ defmodule PhoenixFlags.Testing do
   This avoids DB writes and race conditions in async tests:
 
       setup do
-        MyApp.SystemConfig.put_test_override("enable_benefits", true)
+        MyApp.SystemConfig.Test.put_override("enable_benefits", true)
         :ok
       end
 

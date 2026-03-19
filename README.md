@@ -32,7 +32,7 @@ checks, and a simple API for building admin UIs. One dependency, no external ser
 - **Declarative flags** — define flags in code, auto-seeded on startup, stale flags auto-removed
 - **Cluster-aware** — writes replicate to all connected nodes automatically
 - **Test-friendly** — process dictionary overrides (no DB, no races) + Ecto sandbox helpers
-- **Embedded admin dashboard** — self-contained LiveView UI, mount with one router line
+- **Embedded admin dashboard** — LiveView UI that renders inside your app's layout, mount with one router line
 - **Versioned migrations** — Oban-style migration versioning for schema upgrades
 - **Metadata sync** — label, description, category changes deploy automatically; runtime values preserved
 
@@ -85,7 +85,7 @@ end
 ```
 
 Flags are validated at compile time. A typo in the type or an invalid default
-will raise `ArgumentError` during `mix compile` — not at runtime.
+will raise `PhoenixFlags.Error` during `mix compile` — not at runtime.
 
 ### 2. Create the migration
 
@@ -181,7 +181,7 @@ The `flag/2` macro is the recommended way to define flags. It provides:
 ### Compile-Time Validation
 
 ```elixir
-# This raises ArgumentError at compile time:
+# This raises PhoenixFlags.Error at compile time:
 flag "bad_flag", type: :invalid_type, default: "x"
 
 # So does this:
@@ -224,7 +224,7 @@ not on every read.
                     │   Your Application  │
                     │                     │
   get("key")  ────▶│  :persistent_term   │◀──── zero-copy reads
-                    │   %{key => value}   │      (no process call)
+                    │  {values, entries}  │      (no process call)
                     └─────────┬───────────┘
                               │
               update_entry()  │  GenServer.call
@@ -341,8 +341,8 @@ PhoenixFlags.Migration.migrated_version()
 
 ## Admin Dashboard
 
-PhoenixFlags ships a self-contained LiveView dashboard — no dependency on your
-app's components, layouts, or CSS framework. Mount it with a single router line.
+PhoenixFlags ships a LiveView dashboard that renders inside your app's existing
+layout. Mount it with a single router line.
 
 ### Mounting the Dashboard
 
@@ -354,43 +354,45 @@ defmodule MyAppWeb.Router do
   scope "/admin" do
     pipe_through [:browser, :require_admin]
 
-    flags_dashboard "/flags", config: MyApp.SystemConfig
+    flags_dashboard "/flags",
+      config: MyApp.SystemConfig,
+      layout: {MyAppWeb.Layouts, :app}
   end
 end
 ```
 
-That's it. Visit `/admin/flags` to see all your flags grouped by category with:
+Visit `/admin/flags` to see all your flags grouped by category with:
 - Toggle switches for booleans
 - Inline edit forms for other types
 - Validation errors displayed on save
-- Flash messages for success/error
-- Dark mode support (via `prefers-color-scheme`)
 
 ### Dashboard Options
 
 ```elixir
 flags_dashboard "/flags",
   config: MyApp.SystemConfig,                              # required
-  on_mount: [{MyAppWeb.AdminAuth, :ensure_authenticated}], # auth hooks
-  csp_nonce_assign_key: :csp_nonce                         # CSP support
+  layout: {MyAppWeb.Layouts, :app},                        # your app layout
+  on_mount: [{MyAppWeb.AdminAuth, :ensure_authenticated}]  # auth hooks
 ```
+
+| Option | Description |
+|---|---|
+| `:config` (required) | The module that `use PhoenixFlags` |
+| `:layout` | Layout to wrap the dashboard (e.g. `{MyAppWeb.Layouts, :app}`) |
+| `:on_mount` | List of `on_mount` hooks for the live session (e.g. authentication) |
+| `:live_socket_path` | Defaults to `"/live"` |
 
 ### How It Works
 
-The dashboard uses the same pattern as Phoenix LiveDashboard:
-
-- **Isolated `live_session`** — won't conflict with your app's layout or sessions
-- **Self-contained root layout** — ships its own HTML shell with inlined CSS
-- **Own component library** — toggle switches, inputs, cards — no dependency on
-  your `CoreComponents` or CSS framework
-- **Dark mode** — respects `prefers-color-scheme` automatically
+- **Isolated `live_session`** — won't conflict with your app's sessions
+- **Uses your app's layout** — renders inside your existing navigation/sidebar
+  via the `:layout` option
 - **Session-based config** — the router macro passes your config module through
   the LiveView session
 
 ### Custom UI
 
-If you outgrow the embedded dashboard and want full control over styling, build
-your own LiveView using the data API:
+If you want full control, build your own LiveView using the data API:
 
 ```elixir
 MyApp.SystemConfig.all_grouped()
@@ -420,7 +422,7 @@ MyApp.SystemConfig.update_entry("enable_benefits", %{"value" => "true"})
 | Function | Description |
 |---|---|
 | `get(key, default \\ nil)` | Read a cached value, cast to native type |
-| `update_entry(key, attrs)` | Update a value, sync cache + cluster |
+| `update_entry(key, attrs, opts \\ [])` | Update a value, sync cache + cluster. Accepts `:timeout`. |
 | `all_grouped()` | All entries grouped by category (for admin UI) |
 | `flags()` | List of declared `PhoenixFlags.Flag` structs |
 

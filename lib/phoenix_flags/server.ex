@@ -33,8 +33,7 @@ defmodule PhoenixFlags.Server do
       {:ok, config} ->
         if config.cache_enabled do
           instance
-          |> cache_key()
-          |> read_persistent_term(%{})
+          |> read_cached_values()
           |> Map.get(key, default)
         else
           case PhoenixFlags.Testing.get_override(instance, key) do
@@ -83,7 +82,7 @@ defmodule PhoenixFlags.Server do
       {:ok, config} ->
         entries =
           if config.cache_enabled do
-            instance |> entries_key() |> read_persistent_term([])
+            read_cached_entries(instance)
           else
             config.repo.all(Entry)
           end
@@ -300,10 +299,9 @@ defmodule PhoenixFlags.Server do
   defp load_cache(%Config{} = config) do
     entries = config.repo.all(Entry)
 
-    cache = Map.new(entries, fn entry -> {entry.key, Entry.cast_value(entry.value, entry.type)} end)
+    values = Map.new(entries, fn entry -> {entry.key, Entry.cast_value(entry.value, entry.type)} end)
 
-    :persistent_term.put(cache_key(config.name), cache)
-    :persistent_term.put(entries_key(config.name), entries)
+    :persistent_term.put(cache_key(config.name), {values, entries})
   end
 
   defp fallback_read(%Config{} = config, key, default) do
@@ -326,8 +324,15 @@ defmodule PhoenixFlags.Server do
     end
   end
 
+  defp read_cached_values(instance) do
+    instance |> cache_key() |> read_persistent_term({%{}, []}) |> elem(0)
+  end
+
+  defp read_cached_entries(instance) do
+    instance |> cache_key() |> read_persistent_term({%{}, []}) |> elem(1)
+  end
+
   defp cache_key(instance), do: {PhoenixFlags, instance, :cache}
-  defp entries_key(instance), do: {PhoenixFlags, instance, :entries}
   defp config_key(instance), do: {PhoenixFlags, instance, :config}
 
   defp get_config(instance) do
