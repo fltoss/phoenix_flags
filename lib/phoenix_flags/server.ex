@@ -88,11 +88,7 @@ defmodule PhoenixFlags.Server do
             config.repo.all(Entry)
           end
 
-        # Build a position index from declared flags to preserve declaration order
-        order =
-          config.name.flags()
-          |> Enum.with_index()
-          |> Map.new(fn {flag, index} -> {flag.key, index} end)
+        order = read_flag_order(instance)
 
         entries
         |> Enum.sort_by(&Map.get(order, &1.key, 999_999))
@@ -112,6 +108,7 @@ defmodule PhoenixFlags.Server do
   def init(%Config{} = config) do
     Process.flag(:trap_exit, true)
     :persistent_term.put(config_key(config.name), config)
+    store_flag_order(config)
     seed_flags(config)
     load_cache(config)
     {:ok, config}
@@ -130,11 +127,11 @@ defmodule PhoenixFlags.Server do
         |> case do
           {:ok, updated} ->
             try do
-              load_cache(config)
+              patch_cache(config, updated)
             rescue
               error ->
                 Logger.error(
-                  "PhoenixFlags: failed to reload cache after update: #{inspect(error)}"
+                  "PhoenixFlags: failed to update cache after write: #{inspect(error)}"
                 )
             end
 
@@ -166,10 +163,11 @@ defmodule PhoenixFlags.Server do
 
   @impl true
   def terminate(_reason, %Config{} = config) do
-    # Only erase the config key. Leave cache and entries intact so that
+    # Only erase the config and order keys. Leave cache intact so that
     # get/3 can still serve (possibly stale) values during a restart.
     # init/1 will overwrite them with fresh data.
     :persistent_term.erase(config_key(config.name))
+    :persistent_term.erase(order_key(config.name))
   rescue
     error ->
       Logger.debug("PhoenixFlags: terminate cleanup failed: #{inspect(error)}")
@@ -330,6 +328,28 @@ defmodule PhoenixFlags.Server do
     :persistent_term.put(cache_key(config.name), {values, entries})
   end
 
+  defp patch_cache(%Config{} = config, %Entry{} = updated) do
+    {values, entries} = read_persistent_term(cache_key(config.name), {%{}, []})
+
+    new_values = Map.put(values, updated.key, Entry.cast_value(updated.value, updated.type))
+    new_entries = Enum.map(entries, fn e -> if e.key == updated.key, do: updated, else: e end)
+
+    :persistent_term.put(cache_key(config.name), {new_values, new_entries})
+  end
+
+  defp store_flag_order(%Config{} = config) do
+    order =
+      config.name.flags()
+      |> Enum.with_index()
+      |> Map.new(fn {flag, index} -> {flag.key, index} end)
+
+    :persistent_term.put(order_key(config.name), order)
+  end
+
+  defp read_flag_order(instance) do
+    read_persistent_term(order_key(instance), %{})
+  end
+
   defp fallback_read(%Config{} = config, key, default) do
     case config.repo.get_by(Entry, key: key) do
       %Entry{value: value, type: type} -> Entry.cast_value(value, type)
@@ -360,6 +380,7 @@ defmodule PhoenixFlags.Server do
 
   defp cache_key(instance), do: {PhoenixFlags, instance, :cache}
   defp config_key(instance), do: {PhoenixFlags, instance, :config}
+  defp order_key(instance), do: {PhoenixFlags, instance, :order}
 
   defp get_config(instance) do
     :persistent_term.get(config_key(instance))

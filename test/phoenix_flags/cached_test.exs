@@ -41,7 +41,7 @@ defmodule PhoenixFlags.CachedTest do
     pid = start_supervised!({PhoenixFlags.Server, config})
 
     on_exit(fn ->
-      for key <- [:cache, :config] do
+      for key <- [:cache, :config, :order] do
         try do
           :persistent_term.erase({PhoenixFlags, CachedConfig, key})
         rescue

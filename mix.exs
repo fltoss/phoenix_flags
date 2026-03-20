@@ -1,7 +1,7 @@
 defmodule PhoenixFlags.MixProject do
   use Mix.Project
 
-  @version "0.4.1"
+  @version "0.4.2"
   @source_url "https://github.com/fltoss/phoenix_flags"
 
   def project do
@@ -44,7 +44,8 @@ defmodule PhoenixFlags.MixProject do
       {:postgrex, ">= 0.0.0", optional: true},
       {:igniter, "~> 0.5", optional: true},
       {:ex_doc, "~> 0.34", only: :dev, runtime: false},
-      {:credo, "~> 1.0", only: [:dev, :test], runtime: false}
+      {:credo, "~> 1.0", only: [:dev, :test], runtime: false},
+      {:benchee, "~> 1.3", only: :dev}
     ]
   end
 

@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-03-20
+
+### Changed
+
+- `update_entry/3` now patches the persistent_term cache in-memory instead of doing a full `repo.all(Entry)` reload — reduces DB calls per write from 3 to 2
+- Flag declaration order index is now pre-computed once at startup and stored in persistent_term, instead of being rebuilt on every `all_grouped/0` call
+
+### Added
+
+- Benchee benchmarks (`bench/phoenix_flags_bench.exs`) covering all public functions
+- Benchmark documentation (`docs/benchmarks.md`) with I/O profiles and results
+
 ## [0.4.1] - 2026-03-20
 
 ### Fixed

@@ -1,18 +1,5 @@
 # TODO
 
-## Performance
-
-### Incremental cache update on single-entry writes
-Currently `load_cache/1` does `repo.all(Entry)` after every `update_entry` call,
-rebuilding the entire persistent_term map. For large flag tables this blocks the
-GenServer unnecessarily. Instead, update only the changed key in the cached
-`{values, entries}` tuple and skip the DB round-trip.
-
-### Pre-compute flag ordering in init
-`all_grouped/1` rebuilds the declaration-order index on every call via
-`config.name.flags() |> Enum.with_index()`. This could be computed once in
-`init/1` and stored alongside the config in persistent_term.
-
 ## Robustness
 
 ### Retry logic for seed_flags DB errors
