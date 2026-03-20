@@ -30,7 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Self-contained CSS and HTML layout — dashboard no longer depends on host app's stylesheets or layout system
-- Asset plug (`PhoenixFlags.UI.Assets`) serves CSS with content-hashed URLs and immutable cache headers
+- Asset plug serves CSS with content-hashed URLs and immutable cache headers
 - Own root layout with `<script>` tag to load the host app's LiveView JS
 - `:app_js` option on `flags_dashboard` to customise the JS bundle path (defaults to `/assets/js/app.js`)
 - 14 LiveView tests covering renders, toggle, edit, save, validation errors, cancel, and select
