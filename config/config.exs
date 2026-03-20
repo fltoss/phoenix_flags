@@ -20,5 +20,7 @@ if config_env() == :test do
     live_view: [signing_salt: "pf_test_signing_salt"],
     render_errors: [formats: [html: PhoenixFlags.TestErrorHTML]]
 
-  config :phoenix_test, :endpoint, PhoenixFlags.TestEndpoint
+  if Code.ensure_loaded?(PhoenixTest) do
+    config :phoenix_test, :endpoint, PhoenixFlags.TestEndpoint
+  end
 end

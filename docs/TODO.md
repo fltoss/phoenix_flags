@@ -25,14 +25,3 @@ out of sync.
 `notify_peers/1` uses fire-and-forget `send/2`. For stronger consistency
 guarantees, consider a `GenServer.call` with a short timeout, or at minimum
 log when a peer node is unreachable.
-
-## Testing
-
-### Concurrent seed tests
-Add tests for two servers starting simultaneously against the same database,
-verifying that `on_conflict: :nothing` correctly handles the race without
-errors or data loss.
-
-### Server init without DB
-Test that the server handles a database connection failure during `init/1`
-gracefully (e.g. crashes cleanly so the supervisor can retry).

@@ -317,4 +317,116 @@ defmodule PhoenixFlags.SeedTest do
       assert entry.label == "Perfect"
     end
   end
+
+  describe "concurrent seed" do
+    test "two servers seeding the same flags simultaneously do not error or lose data" do
+      flags = [
+        %{key: "race_a", type: "boolean", value: "true", category: "test", label: "Race A"},
+        %{key: "race_b", type: "integer", value: "42", category: "test", label: "Race B"},
+        %{key: "race_c", type: "string", value: "hello", category: "test", label: "Race C"}
+      ]
+
+      # Both configs share the same flags module (simulating two nodes with same code)
+      module_name = :"PhoenixFlags.SeedTest.SharedFlags#{System.unique_integer([:positive])}"
+
+      Module.create(
+        module_name,
+        quote do
+          def flags, do: unquote(Macro.escape(flags))
+        end,
+        Macro.Env.location(__ENV__)
+      )
+
+      config1 = %Config{
+        otp_app: :phoenix_flags,
+        repo: TestRepo,
+        name: :"#{module_name}.Node1",
+        cache_enabled: false
+      }
+
+      config2 = %Config{
+        otp_app: :phoenix_flags,
+        repo: TestRepo,
+        name: :"#{module_name}.Node2",
+        cache_enabled: false
+      }
+
+      # Patch both names to use the shared flags module
+      Module.create(
+        config1.name,
+        quote(do: defdelegate(flags(), to: unquote(module_name))),
+        Macro.Env.location(__ENV__)
+      )
+
+      Module.create(
+        config2.name,
+        quote(do: defdelegate(flags(), to: unquote(module_name))),
+        Macro.Env.location(__ENV__)
+      )
+
+      # Start both servers concurrently against the same database.
+      # Unlink so the server survives after the task exits.
+      start_fn = fn config ->
+        {:ok, pid} = Server.start_link(config)
+        Process.unlink(pid)
+        pid
+      end
+
+      task1 = Task.async(fn -> start_fn.(config1) end)
+      task2 = Task.async(fn -> start_fn.(config2) end)
+
+      pid1 = Task.await(task1)
+      pid2 = Task.await(task2)
+
+      # Both started without error — verify all flags exist exactly once
+      assert TestRepo.get_by(Entry, key: "race_a")
+      assert TestRepo.get_by(Entry, key: "race_b")
+      assert TestRepo.get_by(Entry, key: "race_c")
+
+      import Ecto.Query
+      assert TestRepo.aggregate(where(Entry, [e], e.key == "race_a"), :count) == 1
+      assert TestRepo.aggregate(where(Entry, [e], e.key == "race_b"), :count) == 1
+      assert TestRepo.aggregate(where(Entry, [e], e.key == "race_c"), :count) == 1
+
+      GenServer.stop(pid1)
+      GenServer.stop(pid2)
+    end
+  end
+
+  describe "server init without DB" do
+    test "crashes cleanly and logs warning when database is unavailable" do
+      import ExUnit.CaptureLog
+
+      flags = [
+        %{key: "no_db", type: "boolean", value: "true", category: "test", label: "No DB"}
+      ]
+
+      module_name = :"PhoenixFlags.SeedTest.NoDB#{System.unique_integer([:positive])}"
+
+      Module.create(
+        module_name,
+        quote do
+          def flags, do: unquote(Macro.escape(flags))
+        end,
+        Macro.Env.location(__ENV__)
+      )
+
+      config = %Config{
+        otp_app: :phoenix_flags,
+        repo: PhoenixFlags.FakeRepo,
+        name: module_name,
+        cache_enabled: false
+      }
+
+      # Server should crash during init — not hang or silently degrade
+      Process.flag(:trap_exit, true)
+
+      log =
+        capture_log(fn ->
+          assert {:error, _reason} = Server.start_link(config)
+        end)
+
+      assert log =~ "failed to sync flags"
+    end
+  end
 end

@@ -1,6 +1,8 @@
 defmodule PhoenixFlags.ServerTest do
   use PhoenixFlags.DataCase
 
+  import ExUnit.CaptureLog
+
   alias PhoenixFlags.Entry
 
   setup do
@@ -93,7 +95,7 @@ defmodule PhoenixFlags.ServerTest do
   end
 
   describe "get/3 with malformed DB values" do
-    test "returns nil for corrupted integer value" do
+    test "returns nil and logs warning for corrupted integer value" do
       TestRepo.insert!(%Entry{
         key: "bad_int",
         value: "abc",
@@ -102,10 +104,11 @@ defmodule PhoenixFlags.ServerTest do
         label: "Bad Int"
       })
 
-      assert TestConfig.get("bad_int") == nil
+      log = capture_log(fn -> assert TestConfig.get("bad_int") == nil end)
+      assert log =~ "failed to cast \"abc\" as integer"
     end
 
-    test "returns nil for corrupted decimal value" do
+    test "returns nil and logs warning for corrupted decimal value" do
       TestRepo.insert!(%Entry{
         key: "bad_dec",
         value: "not-a-number",
@@ -114,10 +117,11 @@ defmodule PhoenixFlags.ServerTest do
         label: "Bad Dec"
       })
 
-      assert TestConfig.get("bad_dec") == nil
+      log = capture_log(fn -> assert TestConfig.get("bad_dec") == nil end)
+      assert log =~ "failed to cast \"not-a-number\" as decimal"
     end
 
-    test "returns nil for corrupted percentage value" do
+    test "returns nil and logs warning for corrupted percentage value" do
       TestRepo.insert!(%Entry{
         key: "bad_pct",
         value: "xyz",
@@ -126,10 +130,11 @@ defmodule PhoenixFlags.ServerTest do
         label: "Bad Pct"
       })
 
-      assert TestConfig.get("bad_pct") == nil
+      log = capture_log(fn -> assert TestConfig.get("bad_pct") == nil end)
+      assert log =~ "failed to cast \"xyz\" as percentage"
     end
 
-    test "returns nil for partial integer like 42abc" do
+    test "returns nil and logs warning for partial integer like 42abc" do
       TestRepo.insert!(%Entry{
         key: "partial_int",
         value: "42abc",
@@ -138,7 +143,8 @@ defmodule PhoenixFlags.ServerTest do
         label: "Partial Int"
       })
 
-      assert TestConfig.get("partial_int") == nil
+      log = capture_log(fn -> assert TestConfig.get("partial_int") == nil end)
+      assert log =~ "failed to cast \"42abc\" as integer"
     end
   end
 
