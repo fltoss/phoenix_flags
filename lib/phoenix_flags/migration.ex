@@ -37,6 +37,7 @@ defmodule PhoenixFlags.Migration do
 
   @initial_version 1
   @current_version 1
+  @prefix_pattern ~r/^[a-z_][a-z0-9_]*$/
 
   @doc """
   Runs migrations up to the specified version (or the latest).
@@ -44,6 +45,7 @@ defmodule PhoenixFlags.Migration do
   def up(opts \\ []) do
     version = Keyword.get(opts, :version, @current_version)
     prefix = Keyword.get(opts, :prefix, "public")
+    validate_prefix!(prefix)
     current = migrated_version(prefix)
 
     if current < version do
@@ -63,6 +65,7 @@ defmodule PhoenixFlags.Migration do
   def down(opts \\ []) do
     version = Keyword.get(opts, :version, @initial_version) - 1
     prefix = Keyword.get(opts, :prefix, "public")
+    validate_prefix!(prefix)
     current = migrated_version(prefix)
 
     if current > version do
@@ -85,6 +88,8 @@ defmodule PhoenixFlags.Migration do
   Returns 0 if the table doesn't exist or has no version comment.
   """
   def migrated_version(prefix \\ "public") do
+    validate_prefix!(prefix)
+
     query = """
     SELECT obj_description(c.oid)
     FROM pg_class c
@@ -95,7 +100,10 @@ defmodule PhoenixFlags.Migration do
 
     case repo().query(query, [prefix]) do
       {:ok, %{rows: [[version]]}} when is_binary(version) ->
-        String.to_integer(version)
+        case Integer.parse(version) do
+          {v, ""} -> v
+          _ -> 0
+        end
 
       _ ->
         0
@@ -107,5 +115,13 @@ defmodule PhoenixFlags.Migration do
 
   defp set_version(prefix, version) when is_integer(version) do
     execute("COMMENT ON TABLE #{prefix}.system_flags IS '#{version}'")
+  end
+
+  defp validate_prefix!(prefix) do
+    unless Regex.match?(@prefix_pattern, prefix) do
+      raise ArgumentError,
+            "PhoenixFlags.Migration: invalid prefix #{inspect(prefix)}, " <>
+              "must match #{inspect(@prefix_pattern)}"
+    end
   end
 end

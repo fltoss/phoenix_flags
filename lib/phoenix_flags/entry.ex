@@ -20,6 +20,8 @@ defmodule PhoenixFlags.Entry do
 
   import Ecto.Changeset
 
+  require Logger
+
   @primary_key {:id, :binary_id, autogenerate: true}
 
   schema "system_flags" do
@@ -57,8 +59,6 @@ defmodule PhoenixFlags.Entry do
     end
   end
 
-  require Logger
-
   @doc """
   Casts a stored string value to its native Elixir type.
   """
@@ -71,7 +71,7 @@ defmodule PhoenixFlags.Entry do
         integer
 
       _ ->
-        Logger.debug("PhoenixFlags: failed to cast #{inspect(value)} as integer")
+        Logger.warning("PhoenixFlags: failed to cast #{inspect(value)} as integer")
         nil
     end
   end
@@ -82,7 +82,7 @@ defmodule PhoenixFlags.Entry do
         decimal
 
       _ ->
-        Logger.debug("PhoenixFlags: failed to cast #{inspect(value)} as #{type}")
+        Logger.warning("PhoenixFlags: failed to cast #{inspect(value)} as #{type}")
         nil
     end
   end

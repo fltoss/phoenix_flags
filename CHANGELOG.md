@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-03-20
+
+### Fixed
+
+- SQL injection vector in migration `prefix` — now validated against `^[a-z_][a-z0-9_]*$`
+- Unsafe `String.to_integer/1` in `migrated_version/1` — replaced with `Integer.parse/1` with fallback
+- Cast failures (`cast_value/2`) now log at `:warning` instead of `:debug` for better observability
+- Cache reload failures now log at `:error` instead of `:warning`
+- `insert_all` seed log now reports the actual inserted count, not the declared count
+- `terminate/2` now logs cleanup failures at `:debug` instead of silently swallowing them
+- `to_seed_map/1` catch-all clause tightened to require `:key`, `:type`, and `:value` keys
+- Moved `require Logger` to top of `Entry` module
+
+### Added
+
+- Tests for malformed DB values (corrupted integer, decimal, percentage, partial integer)
+- `docs/TODO.md` with planned improvements
+
 ## [0.4.0] - 2026-03-20
 
 ### Added

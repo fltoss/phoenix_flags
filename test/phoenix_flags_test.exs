@@ -92,6 +92,56 @@ defmodule PhoenixFlags.ServerTest do
     end
   end
 
+  describe "get/3 with malformed DB values" do
+    test "returns nil for corrupted integer value" do
+      TestRepo.insert!(%Entry{
+        key: "bad_int",
+        value: "abc",
+        type: "integer",
+        category: "test",
+        label: "Bad Int"
+      })
+
+      assert TestConfig.get("bad_int") == nil
+    end
+
+    test "returns nil for corrupted decimal value" do
+      TestRepo.insert!(%Entry{
+        key: "bad_dec",
+        value: "not-a-number",
+        type: "decimal",
+        category: "test",
+        label: "Bad Dec"
+      })
+
+      assert TestConfig.get("bad_dec") == nil
+    end
+
+    test "returns nil for corrupted percentage value" do
+      TestRepo.insert!(%Entry{
+        key: "bad_pct",
+        value: "xyz",
+        type: "percentage",
+        category: "test",
+        label: "Bad Pct"
+      })
+
+      assert TestConfig.get("bad_pct") == nil
+    end
+
+    test "returns nil for partial integer like 42abc" do
+      TestRepo.insert!(%Entry{
+        key: "partial_int",
+        value: "42abc",
+        type: "integer",
+        category: "test",
+        label: "Partial Int"
+      })
+
+      assert TestConfig.get("partial_int") == nil
+    end
+  end
+
   describe "update_entry/2" do
     test "updates an existing entry" do
       TestRepo.insert!(%Entry{

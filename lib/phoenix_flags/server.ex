@@ -133,7 +133,7 @@ defmodule PhoenixFlags.Server do
               load_cache(config)
             rescue
               error ->
-                Logger.warning(
+                Logger.error(
                   "PhoenixFlags: failed to reload cache after update: #{inspect(error)}"
                 )
             end
@@ -153,7 +153,7 @@ defmodule PhoenixFlags.Server do
       load_cache(config)
     rescue
       error ->
-        Logger.warning("PhoenixFlags: failed to reload cache: #{inspect(error)}")
+        Logger.error("PhoenixFlags: failed to reload cache: #{inspect(error)}")
     end
 
     {:noreply, config}
@@ -171,7 +171,9 @@ defmodule PhoenixFlags.Server do
     # init/1 will overwrite them with fresh data.
     :persistent_term.erase(config_key(config.name))
   rescue
-    _ -> :ok
+    error ->
+      Logger.debug("PhoenixFlags: terminate cleanup failed: #{inspect(error)}")
+      :ok
   end
 
   # ============================================================================
@@ -222,8 +224,8 @@ defmodule PhoenixFlags.Server do
           |> Map.put(:updated_at, now)
         end)
 
-      config.repo.insert_all(Entry, new_entries, on_conflict: :nothing)
-      Logger.info("PhoenixFlags: seeded #{length(new_entries)} new flag(s)")
+      {count, _} = config.repo.insert_all(Entry, new_entries, on_conflict: :nothing)
+      Logger.info("PhoenixFlags: seeded #{count} new flag(s) (#{length(new_entries)} declared)")
       true
     else
       false

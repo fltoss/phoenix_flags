@@ -131,5 +131,6 @@ defmodule PhoenixFlags.Flag do
     }
   end
 
-  def to_seed_map(%{key: _} = map), do: map
+  # Pass-through for pre-built seed maps (used in tests)
+  def to_seed_map(%{key: _, type: _, value: _} = map), do: map
 end
