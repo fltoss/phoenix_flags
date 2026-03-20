@@ -12,4 +12,13 @@ if config_env() == :test do
     pool_size: System.schedulers_online() * 2
 
   config :phoenix_flags, ecto_repos: [PhoenixFlags.TestRepo]
+
+  config :phoenix_flags, PhoenixFlags.TestEndpoint,
+    http: [ip: {127, 0, 0, 1}, port: 4099],
+    secret_key_base: String.duplicate("a", 64),
+    server: false,
+    live_view: [signing_salt: "pf_test_signing_salt"],
+    render_errors: [formats: [html: PhoenixFlags.TestErrorHTML]]
+
+  config :phoenix_test, :endpoint, PhoenixFlags.TestEndpoint
 end

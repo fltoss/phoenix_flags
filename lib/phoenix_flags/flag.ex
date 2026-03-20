@@ -69,7 +69,8 @@ defmodule PhoenixFlags.Flag do
   defp validate_key!(key) when is_binary(key) and byte_size(key) > 0, do: :ok
 
   defp validate_key!(key) do
-    raise PhoenixFlags.Error, "PhoenixFlags.Flag :key must be a non-empty string, got: #{inspect(key)}"
+    raise PhoenixFlags.Error,
+          "PhoenixFlags.Flag :key must be a non-empty string, got: #{inspect(key)}"
   end
 
   defp validate_type!(type) when type in @valid_types, do: :ok
@@ -109,8 +110,12 @@ defmodule PhoenixFlags.Flag do
 
   defp validate_default!(type, value, _options) do
     case PhoenixFlags.Type.validate_value(Atom.to_string(type), value) do
-      :ok -> :ok
-      {:error, message} -> raise PhoenixFlags.Error, "PhoenixFlags.Flag default for :#{type} #{message}, got: #{inspect(value)}"
+      :ok ->
+        :ok
+
+      {:error, message} ->
+        raise PhoenixFlags.Error,
+              "PhoenixFlags.Flag default for :#{type} #{message}, got: #{inspect(value)}"
     end
   end
 

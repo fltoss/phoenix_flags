@@ -68,50 +68,6 @@ if Code.ensure_loaded?(Igniter) do
         file: "test.exs"
       )
       |> Igniter.Project.Application.add_new_child(module_name)
-      |> add_tailwind_source()
-    end
-
-    defp add_tailwind_source(igniter) do
-      css_path = "assets/css/app.css"
-      source_line = ~s|@source "../../deps/phoenix_flags/lib/phoenix_flags/ui";|
-
-      if Igniter.exists?(igniter, css_path) do
-        Igniter.update_file(igniter, css_path, fn source ->
-          content = Rewrite.Source.get(source, :content)
-
-          if String.contains?(content, "phoenix_flags") do
-            source
-          else
-            # Insert after the last @source line
-            new_content =
-              String.replace(
-                content,
-                ~r/(@source\s+"[^"]+";)\n(?!@source)/,
-                "\\1\n#{source_line}\n",
-                global: false
-              )
-
-            # If regex didn't match (different format), append after all @source lines
-            new_content =
-              if new_content == content do
-                String.replace(content, ~r/(@source[^\n]+\n)(?!\s*@source)/, "\\1#{source_line}\n",
-                  global: false
-                )
-              else
-                new_content
-              end
-
-            Rewrite.Source.update(source, :content, new_content)
-          end
-        end)
-      else
-        Igniter.add_notice(igniter, """
-        Could not find assets/css/app.css.
-        Add this line to your CSS file manually:
-
-            #{source_line}
-        """)
-      end
     end
   end
 end

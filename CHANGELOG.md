@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-03-20
+
+### Added
+
+- Self-contained CSS and HTML layout — dashboard no longer depends on host app's stylesheets or layout system
+- Asset plug (`PhoenixFlags.UI.Assets`) serves CSS with content-hashed URLs and immutable cache headers
+- Own root layout with `<script>` tag to load the host app's LiveView JS
+- `:app_js` option on `flags_dashboard` to customise the JS bundle path (defaults to `/assets/js/app.js`)
+- 14 LiveView tests covering renders, toggle, edit, save, validation errors, cancel, and select
+- `select_options/1` callback on the generated module for `:select` type flag options
+- Declaration-order sorting — categories and entries always render in `flag/2` declaration order
+
+### Changed
+
+- Dashboard is fully self-contained (like Oban Web / LiveDashboard) — no `@source` directive or `:layout` option needed
+- Removed `:layout` option from `flags_dashboard` macro
+- Removed flash messages from dashboard — updates are instant and don't need confirmation
+- Extracted `entry_info` component to reduce template duplication
+- Consolidated integer/decimal/percentage inputs into a single component clause
+- Extracted `input_class` and `reload` helpers to reduce repetition
+
+### Removed
+
+- `:layout` option from `flags_dashboard` — the package owns its own layout now
+- Flash message rendering from the live layout
+
 ## [0.3.0] - 2026-03-19
 
 ### Added

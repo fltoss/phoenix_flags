@@ -88,9 +88,16 @@ defmodule PhoenixFlags.Server do
             config.repo.all(Entry)
           end
 
+        # Build a position index from declared flags to preserve declaration order
+        order =
+          config.name.flags()
+          |> Enum.with_index()
+          |> Map.new(fn {flag, index} -> {flag.key, index} end)
+
         entries
+        |> Enum.sort_by(&Map.get(order, &1.key, 999_999))
         |> Enum.group_by(& &1.category)
-        |> Enum.sort_by(fn {category, _} -> category end)
+        |> Enum.sort_by(fn {_category, [first | _]} -> Map.get(order, first.key, 999_999) end)
 
       :error ->
         []
@@ -126,7 +133,9 @@ defmodule PhoenixFlags.Server do
               load_cache(config)
             rescue
               error ->
-                Logger.warning("PhoenixFlags: failed to reload cache after update: #{inspect(error)}")
+                Logger.warning(
+                  "PhoenixFlags: failed to reload cache after update: #{inspect(error)}"
+                )
             end
 
             notify_peers(config)
@@ -182,7 +191,11 @@ defmodule PhoenixFlags.Server do
     existing_keys = MapSet.new(existing_entries, & &1.key)
 
     changed? = do_seed_inserts(config, declared_flags, declared_keys, existing_keys)
-    changed? = do_seed_updates(config, declared_by_key, declared_keys, existing_by_key, existing_keys) or changed?
+
+    changed? =
+      do_seed_updates(config, declared_by_key, declared_keys, existing_by_key, existing_keys) or
+        changed?
+
     changed? = do_seed_deletes(config, declared_keys, existing_keys) or changed?
 
     if changed?, do: notify_peers(config)
@@ -262,7 +275,9 @@ defmodule PhoenixFlags.Server do
       end)
 
     case result do
-      {:ok, _} -> true
+      {:ok, _} ->
+        true
+
       {:error, reason} ->
         Logger.warning("PhoenixFlags: failed to update flag metadata: #{inspect(reason)}")
         false
@@ -307,7 +322,8 @@ defmodule PhoenixFlags.Server do
   defp load_cache(%Config{} = config) do
     entries = config.repo.all(Entry)
 
-    values = Map.new(entries, fn entry -> {entry.key, Entry.cast_value(entry.value, entry.type)} end)
+    values =
+      Map.new(entries, fn entry -> {entry.key, Entry.cast_value(entry.value, entry.type)} end)
 
     :persistent_term.put(cache_key(config.name), {values, entries})
   end

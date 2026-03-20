@@ -1,7 +1,7 @@
 defmodule PhoenixFlags.MixProject do
   use Mix.Project
 
-  @version "0.3.0"
+  @version "0.4.0"
   @source_url "https://github.com/fltoss/phoenix_flags"
 
   def project do
@@ -35,7 +35,12 @@ defmodule PhoenixFlags.MixProject do
       {:ecto_sql, "~> 3.10"},
       {:decimal, "~> 2.0"},
       {:jason, "~> 1.4"},
+      {:phoenix, "~> 1.7", optional: true},
+      {:phoenix_html, "~> 4.0", optional: true},
+      {:phoenix_ecto, "~> 4.5", optional: true},
       {:phoenix_live_view, "~> 1.0", optional: true},
+      {:floki, "~> 0.36", only: :test},
+      {:lazy_html, ">= 0.1.0", only: :test},
       {:postgrex, ">= 0.0.0", optional: true},
       {:igniter, "~> 0.5", optional: true},
       {:ex_doc, "~> 0.34", only: :dev, runtime: false},
@@ -53,8 +58,7 @@ defmodule PhoenixFlags.MixProject do
     [
       licenses: ["MIT"],
       links: %{"GitHub" => @source_url},
-      files: ~w(lib .formatter.exs mix.exs README.md CHANGELOG.md LICENSE)
-
+      files: ~w(lib priv/static .formatter.exs mix.exs README.md CHANGELOG.md LICENSE)
     ]
   end
 

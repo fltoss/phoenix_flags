@@ -341,8 +341,9 @@ PhoenixFlags.Migration.migrated_version()
 
 ## Admin Dashboard
 
-PhoenixFlags ships a LiveView dashboard that renders inside your app's existing
-layout. Mount it with a single router line.
+PhoenixFlags ships a self-contained LiveView dashboard with its own CSS and
+layout. Mount it with a single router line — no dependency on your app's
+stylesheets or layout system.
 
 ### Mounting the Dashboard
 
@@ -356,7 +357,7 @@ defmodule MyAppWeb.Router do
 
     flags_dashboard "/flags",
       config: MyApp.SystemConfig,
-      layout: {MyAppWeb.Layouts, :app}
+      on_mount: [{MyAppWeb.AdminAuth, :ensure_authenticated}]
   end
 end
 ```
@@ -365,28 +366,27 @@ Visit `/admin/flags` to see all your flags grouped by category with:
 - Toggle switches for booleans
 - Inline edit forms for other types
 - Validation errors displayed on save
+- Dark mode support (via `prefers-color-scheme`)
 
 ### Dashboard Options
 
 ```elixir
 flags_dashboard "/flags",
   config: MyApp.SystemConfig,                              # required
-  layout: {MyAppWeb.Layouts, :app},                        # your app layout
   on_mount: [{MyAppWeb.AdminAuth, :ensure_authenticated}]  # auth hooks
 ```
 
 | Option | Description |
 |---|---|
 | `:config` (required) | The module that `use PhoenixFlags` |
-| `:layout` | Layout to wrap the dashboard (e.g. `{MyAppWeb.Layouts, :app}`) |
 | `:on_mount` | List of `on_mount` hooks for the live session (e.g. authentication) |
 | `:live_socket_path` | Defaults to `"/live"` |
+| `:app_js` | Path to the app's JS bundle. Defaults to `"/assets/js/app.js"` |
 
 ### How It Works
 
+- **Self-contained** — ships its own CSS and HTML layout, served via an inline asset route
 - **Isolated `live_session`** — won't conflict with your app's sessions
-- **Uses your app's layout** — renders inside your existing navigation/sidebar
-  via the `:layout` option
 - **Session-based config** — the router macro passes your config module through
   the LiveView session
 

@@ -1,0 +1,430 @@
+/*
+ * PhoenixFlags Dashboard — self-contained stylesheet
+ * No Tailwind or DaisyUI dependency. Pure CSS with custom properties.
+ */
+
+/* ------------------------------------------------------------------ */
+/* Reset & Base                                                        */
+/* ------------------------------------------------------------------ */
+:root {
+  --pf-font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    Oxygen-Sans, Ubuntu, Cantarell, "Helvetica Neue", sans-serif;
+
+  /* Light theme */
+  --pf-bg: #ffffff;
+  --pf-bg-subtle: #f8f9fa;
+  --pf-bg-muted: #f1f3f5;
+  --pf-border: #dee2e6;
+  --pf-border-light: #e9ecef;
+  --pf-text: #212529;
+  --pf-text-secondary: #6c757d;
+  --pf-text-muted: #adb5bd;
+  --pf-primary: #4263eb;
+  --pf-primary-hover: #3b5bdb;
+  --pf-primary-text: #ffffff;
+  --pf-success: #2f9e44;
+  --pf-success-bg: #2f9e44;
+  --pf-error: #e03131;
+  --pf-error-bg: #ffe0e0;
+  --pf-error-text: #c92a2a;
+  --pf-info-bg: #d0ebff;
+  --pf-info-text: #1864ab;
+  --pf-toggle-off: #ced4da;
+  --pf-toggle-knob: #ffffff;
+  --pf-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+  --pf-radius: 8px;
+  --pf-radius-sm: 4px;
+  --pf-focus-ring: 0 0 0 3px rgba(66, 99, 235, 0.3);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --pf-bg: #1a1b1e;
+    --pf-bg-subtle: #25262b;
+    --pf-bg-muted: #2c2e33;
+    --pf-border: #373a40;
+    --pf-border-light: #2c2e33;
+    --pf-text: #c1c2c5;
+    --pf-text-secondary: #909296;
+    --pf-text-muted: #5c5f66;
+    --pf-primary: #5c7cfa;
+    --pf-primary-hover: #748ffc;
+    --pf-primary-text: #ffffff;
+    --pf-success: #51cf66;
+    --pf-success-bg: #2f9e44;
+    --pf-error: #ff6b6b;
+    --pf-error-bg: #3d1515;
+    --pf-error-text: #ff8787;
+    --pf-info-bg: #1b2838;
+    --pf-info-text: #74c0fc;
+    --pf-toggle-off: #5c5f66;
+    --pf-toggle-knob: #ffffff;
+    --pf-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+    --pf-focus-ring: 0 0 0 3px rgba(92, 124, 250, 0.3);
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Layout                                                              */
+/* ------------------------------------------------------------------ */
+.pf-body {
+  margin: 0;
+  padding: 0;
+  font-family: var(--pf-font);
+  background: var(--pf-bg-subtle);
+  color: var(--pf-text);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+.pf-container {
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 32px 24px;
+}
+
+/* ------------------------------------------------------------------ */
+/* Header                                                              */
+/* ------------------------------------------------------------------ */
+.pf-header {
+  margin-bottom: 24px;
+}
+
+.pf-header h1 {
+  margin: 0;
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--pf-text);
+  line-height: 1.3;
+}
+
+.pf-header p {
+  margin: 4px 0 0;
+  font-size: 14px;
+  color: var(--pf-text-secondary);
+}
+
+/* ------------------------------------------------------------------ */
+/* Flash Messages                                                      */
+/* ------------------------------------------------------------------ */
+.pf-flash {
+  padding: 12px 16px;
+  border-radius: var(--pf-radius-sm);
+  font-size: 14px;
+  margin-bottom: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.pf-flash-info {
+  background: var(--pf-info-bg);
+  color: var(--pf-info-text);
+}
+
+.pf-flash-error {
+  background: var(--pf-error-bg);
+  color: var(--pf-error-text);
+}
+
+.pf-flash-dismiss {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: inherit;
+  opacity: 0.6;
+  font-size: 18px;
+  padding: 0 0 0 12px;
+  line-height: 1;
+}
+
+.pf-flash-dismiss:hover {
+  opacity: 1;
+}
+
+/* ------------------------------------------------------------------ */
+/* Category Card                                                       */
+/* ------------------------------------------------------------------ */
+.pf-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.pf-card {
+  background: var(--pf-bg);
+  border: 1px solid var(--pf-border);
+  border-radius: var(--pf-radius);
+  box-shadow: var(--pf-shadow);
+  overflow: hidden;
+}
+
+.pf-card-header {
+  padding: 14px 24px;
+  border-bottom: 1px solid var(--pf-border-light);
+}
+
+.pf-card-header h2 {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--pf-text-secondary);
+}
+
+.pf-card-body {
+  /* no padding — rows handle their own */
+}
+
+/* ------------------------------------------------------------------ */
+/* Config Row                                                          */
+/* ------------------------------------------------------------------ */
+.pf-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 24px;
+  border-bottom: 1px solid var(--pf-border-light);
+}
+
+.pf-row:last-child {
+  border-bottom: none;
+}
+
+.pf-row-info {
+  flex: 1;
+  padding-right: 32px;
+  min-width: 0;
+}
+
+.pf-row-label {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--pf-text);
+}
+
+.pf-row-desc {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: var(--pf-text-secondary);
+  max-width: 500px;
+}
+
+.pf-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+}
+
+.pf-row-value {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--pf-text);
+}
+
+.pf-row-edit-btn {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--pf-primary);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.pf-row:hover .pf-row-edit-btn {
+  opacity: 1;
+}
+
+.pf-row-edit-btn:hover {
+  text-decoration: underline;
+}
+
+/* ------------------------------------------------------------------ */
+/* Boolean Toggle                                                      */
+/* ------------------------------------------------------------------ */
+.pf-toggle {
+  position: relative;
+  display: inline-flex;
+  width: 44px;
+  height: 24px;
+  flex-shrink: 0;
+  cursor: pointer;
+  border-radius: 12px;
+  border: 2px solid transparent;
+  background-color: var(--pf-toggle-off);
+  transition: background-color 0.2s ease-in-out;
+  padding: 0;
+}
+
+.pf-toggle:focus {
+  outline: none;
+  box-shadow: var(--pf-focus-ring);
+}
+
+.pf-toggle[aria-checked="true"] {
+  background-color: var(--pf-success-bg);
+}
+
+.pf-toggle-knob {
+  display: block;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--pf-toggle-knob);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+  transition: transform 0.2s ease-in-out;
+  transform: translateX(0);
+}
+
+.pf-toggle[aria-checked="true"] .pf-toggle-knob {
+  transform: translateX(20px);
+}
+
+.pf-toggle-label {
+  font-size: 14px;
+  font-weight: 500;
+  min-width: 60px;
+}
+
+.pf-toggle-label-on {
+  color: var(--pf-success);
+}
+
+.pf-toggle-label-off {
+  color: var(--pf-text-muted);
+}
+
+/* ------------------------------------------------------------------ */
+/* Edit Form Row                                                       */
+/* ------------------------------------------------------------------ */
+.pf-row-editing {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  padding: 16px 24px;
+  background: var(--pf-bg-muted);
+  border-bottom: 1px solid var(--pf-border-light);
+}
+
+.pf-row-editing:last-child {
+  border-bottom: none;
+}
+
+.pf-row-editing .pf-row-info {
+  flex: 1;
+}
+
+.pf-row-editing .pf-row-label {
+  margin-bottom: 4px;
+}
+
+.pf-row-editing .pf-row-desc {
+  margin-bottom: 12px;
+}
+
+.pf-edit-actions {
+  display: flex;
+  gap: 8px;
+  padding-top: 24px;
+  flex-shrink: 0;
+}
+
+/* ------------------------------------------------------------------ */
+/* Form Inputs                                                         */
+/* ------------------------------------------------------------------ */
+.pf-input-wrap {
+  max-width: 280px;
+}
+
+.pf-input,
+.pf-select {
+  display: block;
+  width: 100%;
+  padding: 6px 10px;
+  font-size: 14px;
+  font-family: var(--pf-font);
+  line-height: 1.5;
+  color: var(--pf-text);
+  background: var(--pf-bg);
+  border: 1px solid var(--pf-border);
+  border-radius: var(--pf-radius-sm);
+  box-sizing: border-box;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.pf-input:focus,
+.pf-select:focus {
+  outline: none;
+  border-color: var(--pf-primary);
+  box-shadow: var(--pf-focus-ring);
+}
+
+.pf-input-error {
+  border-color: var(--pf-error);
+}
+
+.pf-input-error:focus {
+  box-shadow: 0 0 0 3px rgba(224, 49, 49, 0.2);
+}
+
+.pf-field-error {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--pf-error);
+}
+
+/* ------------------------------------------------------------------ */
+/* Buttons                                                             */
+/* ------------------------------------------------------------------ */
+.pf-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px 14px;
+  font-size: 13px;
+  font-weight: 500;
+  font-family: var(--pf-font);
+  line-height: 1.5;
+  border-radius: var(--pf-radius-sm);
+  cursor: pointer;
+  border: 1px solid var(--pf-border);
+  background: var(--pf-bg);
+  color: var(--pf-text);
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.pf-btn:hover {
+  background: var(--pf-bg-muted);
+}
+
+.pf-btn:focus {
+  outline: none;
+  box-shadow: var(--pf-focus-ring);
+}
+
+.pf-btn-primary {
+  background: var(--pf-primary);
+  color: var(--pf-primary-text);
+  border-color: var(--pf-primary);
+}
+
+.pf-btn-primary:hover {
+  background: var(--pf-primary-hover);
+  border-color: var(--pf-primary-hover);
+}
+
+/* ------------------------------------------------------------------ */
+/* Empty State                                                         */
+/* ------------------------------------------------------------------ */
+.pf-empty {
+  text-align: center;
+  padding: 48px 24px;
+  color: var(--pf-text-muted);
+  font-size: 14px;
+}
