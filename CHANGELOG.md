@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-04-23
+
+### Added
+
+- **Audit log.** Opt-in per-flag change history via `audit: true` on `use PhoenixFlags`. Writes to a new `system_flags_audit` table. `actor_fn` resolves the actor from the LiveView socket / Plug conn. `audit_log/0` and `audit_log/1` query the history.
+- **Migration V02** adds the `system_flags_audit` table. `PhoenixFlags.Migration.up(version: 2)` runs the whole chain for new installs; existing installs add a second migration calling the same helper (the `mix igniter.upgrade phoenix_flags` task generates this automatically).
+- **`:secret` flag type** for credentials and other sensitive values. Secrets are encrypted at rest via a host-supplied encryptor module (`encrypt/1` + `decrypt/1`), displayed in the dashboard as "Set" / "Not set" with a password-style edit input, and redacted as `"[redacted]"` in the audit log. PhoenixFlags ships no cryptography itself — you pick the cipher and manage the key.
+- **`:encryptor` option** on `use PhoenixFlags`. Required whenever any `:secret` flag is declared — omitting it raises a `PhoenixFlags.Error` at compile time with the list of offending keys. A boot-time check also verifies the encryptor module exports `encrypt/1` and `decrypt/1`.
+- **`mix igniter.upgrade phoenix_flags`** now works — new `Mix.Tasks.PhoenixFlags.Upgrade` module. Generates the v2 migration for users upgrading from 0.4.x.
+
+### Changed
+
+- `update_entry/3` accepts an `:actor` option that's recorded in the audit log.
+- `Entry.changeset/2` accepts `""` as a valid value for `:secret` flags (so operators can clear a secret); non-secret flags continue to reject empty strings as before.
+- **Renamed `PhoenixFlags.Testing.put_override/3` → `stub/3` and `get_override/2` → `get_stub/2`.** The generated `MyApp.SystemConfig.Test.stub/2` helper exposes the new name. This is a breaking API change for tests written against 0.4.x — rename `.Test.put_override("key", value)` to `.Test.stub("key", value)`.
+
 ## [0.4.2] - 2026-03-20
 
 ### Changed

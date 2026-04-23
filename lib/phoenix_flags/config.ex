@@ -14,14 +14,20 @@ defmodule PhoenixFlags.Config do
     :otp_app,
     :repo,
     :name,
-    cache_enabled: true
+    :actor_fn,
+    :encryptor,
+    cache_enabled: true,
+    audit: false
   ]
 
   @type t :: %__MODULE__{
           otp_app: atom(),
           repo: module(),
           name: module(),
-          cache_enabled: boolean()
+          cache_enabled: boolean(),
+          audit: boolean(),
+          actor_fn: (term() -> String.t()) | nil,
+          encryptor: module() | nil
         }
 
   @doc """
@@ -42,7 +48,10 @@ defmodule PhoenixFlags.Config do
       otp_app: opts[:otp_app],
       repo: opts[:repo],
       name: opts[:name],
-      cache_enabled: Map.get(opts, :cache_enabled, true)
+      cache_enabled: Map.get(opts, :cache_enabled, true),
+      audit: Map.get(opts, :audit, false),
+      actor_fn: Map.get(opts, :actor_fn),
+      encryptor: Map.get(opts, :encryptor)
     }
   end
 end

@@ -44,6 +44,20 @@ defmodule PhoenixFlags.FlagTest do
       assert flag.default == "hello"
     end
 
+    test "creates a valid secret flag with empty default" do
+      flag = Flag.new!(key: "api_key", type: :secret)
+
+      assert flag.type == :secret
+      assert flag.default == ""
+    end
+
+    test "creates a valid secret flag with a seeded default" do
+      flag = Flag.new!(key: "api_key", type: :secret, default: "placeholder")
+
+      assert flag.type == :secret
+      assert flag.default == "placeholder"
+    end
+
     test "creates a valid select flag" do
       flag =
         Flag.new!(

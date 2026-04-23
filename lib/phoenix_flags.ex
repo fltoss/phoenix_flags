@@ -32,7 +32,7 @@ defmodule PhoenixFlags do
 
   In test environment, a `Test` submodule is generated with process-scoped overrides:
 
-      MyApp.SystemConfig.Test.put_override("enable_benefits", true)
+      MyApp.SystemConfig.Test.stub("enable_benefits", true)
       MyApp.SystemConfig.Test.insert_entry("enable_benefits", true)
 
   ## Architecture
@@ -62,7 +62,17 @@ defmodule PhoenixFlags do
   end
 
   @doc false
-  defmacro __before_compile__(_env) do
+  defmacro __before_compile__(env) do
+    declared_flags = Module.get_attribute(env.module, :phoenix_flags) || []
+    encryptor_set? = Module.get_attribute(env.module, :phoenix_flags_encryptor_set?) || false
+    secret_flags = for flag <- declared_flags, flag.type == :secret, do: flag.key
+
+    if secret_flags != [] and not encryptor_set? do
+      raise PhoenixFlags.Error,
+            "#{inspect(env.module)} declares :secret flags #{inspect(secret_flags)} but no :encryptor was passed to `use PhoenixFlags`. " <>
+              "Add `encryptor: MyApp.MyEncryptor` (a module exporting encrypt/1 and decrypt/1) or remove the :secret flags."
+    end
+
     quote do
       @doc """
       Returns the list of declared flags. Generated from `flag/2` macro calls.
@@ -94,6 +104,8 @@ defmodule PhoenixFlags do
                  raise(PhoenixFlags.Error, "missing :otp_app option for use PhoenixFlags")
       @repo unquote(opts)[:repo] ||
               raise(PhoenixFlags.Error, "missing :repo option for use PhoenixFlags")
+
+      @phoenix_flags_encryptor_set? Keyword.has_key?(unquote(opts), :encryptor)
 
       @doc false
       def child_spec(runtime_opts \\ []) do
@@ -137,6 +149,22 @@ defmodule PhoenixFlags do
         PhoenixFlags.Server.all_grouped(__MODULE__)
       end
 
+      @doc """
+      Returns all audit log entries, newest first.
+
+      Only available when `audit: true` is set.
+      """
+      def audit_log do
+        PhoenixFlags.Server.audit_log(__MODULE__)
+      end
+
+      @doc """
+      Returns audit log entries for a specific flag key, newest first.
+      """
+      def audit_log(key) do
+        PhoenixFlags.Server.audit_log(__MODULE__, key)
+      end
+
       Module.register_attribute(__MODULE__, :phoenix_flags, accumulate: true)
 
       @before_compile PhoenixFlags
@@ -158,10 +186,10 @@ defmodule PhoenixFlags do
           Sets a per-process config override. No DB writes, no race conditions.
           Safe for `async: true` tests.
 
-              #{inspect(unquote(test_module))}.put_override("enable_benefits", true)
+              #{inspect(unquote(test_module))}.stub("enable_benefits", true)
           """
-          def put_override(key, value) do
-            PhoenixFlags.Testing.put_override(@parent, key, value)
+          def stub(key, value) do
+            PhoenixFlags.Testing.stub(@parent, key, value)
           end
 
           @doc """

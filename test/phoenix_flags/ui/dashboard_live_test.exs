@@ -281,4 +281,58 @@ defmodule PhoenixFlags.UI.DashboardLiveTest do
       assert html =~ "Email Provider"
     end
   end
+
+  describe "secret" do
+    test "shows 'Not set' for an empty secret", %{conn: conn} do
+      TestRepo.insert!(%Entry{
+        key: "api_key",
+        value: "",
+        type: "secret",
+        category: "ai",
+        label: "API Key"
+      })
+
+      {:ok, _view, html} = live(conn, "/flags")
+
+      assert html =~ "API Key"
+      assert html =~ "Not set"
+      refute html =~ "some-cipher"
+    end
+
+    test "shows 'Set' for a populated secret without leaking the ciphertext", %{conn: conn} do
+      TestRepo.insert!(%Entry{
+        key: "api_key",
+        value: "some-cipher",
+        type: "secret",
+        category: "ai",
+        label: "API Key"
+      })
+
+      {:ok, _view, html} = live(conn, "/flags")
+
+      assert html =~ "Set"
+      refute html =~ "some-cipher"
+    end
+
+    test "edit form renders a password input with no pre-filled value", %{conn: conn} do
+      TestRepo.insert!(%Entry{
+        key: "api_key",
+        value: "some-cipher",
+        type: "secret",
+        category: "ai",
+        label: "API Key"
+      })
+
+      {:ok, view, _html} = live(conn, "/flags")
+
+      html =
+        view
+        |> element(~s(button[phx-value-key="api_key"]))
+        |> render_click()
+
+      assert html =~ ~s(type="password")
+      assert html =~ ~s(autocomplete="new-password")
+      refute html =~ ~s(value="some-cipher")
+    end
+  end
 end

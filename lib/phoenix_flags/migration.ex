@@ -36,7 +36,7 @@ defmodule PhoenixFlags.Migration do
   use Ecto.Migration
 
   @initial_version 1
-  @current_version 1
+  @current_version 2
   @prefix_pattern ~r/^[a-z_][a-z0-9_]*$/
 
   @doc """

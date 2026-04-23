@@ -213,9 +213,79 @@ This means you never write seed migrations. Add a flag, deploy, done.
 | Decimal | `:decimal` | `"3000.50"` | `Decimal.new("3000.50")` | must parse as decimal |
 | Percentage | `:percentage` | `"50"` | `Decimal.new("50")` | 0..100 |
 | Select | `:select` | `"ses"` | `"ses"` | app-defined |
+| Secret | `:secret` | ciphertext | `"plaintext"` | none (see [Secrets](#secrets)) |
 
 All values are stored as strings. Casting happens once when the cache is loaded,
 not on every read.
+
+## Secrets
+
+For credentials (API keys, webhook signing secrets, etc.) use `type: :secret`.
+PhoenixFlags encrypts the value at rest using a host-supplied encryptor, masks
+it in the admin dashboard, and redacts it in the audit log.
+
+### 1. Write an encryptor module
+
+Any module that exports `encrypt/1` and `decrypt/1` on binaries will do —
+PhoenixFlags is crypto-agnostic so you pick the cipher and manage the key.
+A minimal AES-256-GCM version:
+
+```elixir
+defmodule MyApp.FlagEncryptor do
+  @aad "phoenix_flags_v1"
+
+  def encrypt(plaintext) do
+    iv = :crypto.strong_rand_bytes(12)
+    {ct, tag} = :crypto.crypto_one_time_aead(:aes_256_gcm, key(), iv, plaintext, @aad, true)
+    Base.encode64(iv <> tag <> ct)
+  end
+
+  def decrypt(blob) do
+    <<iv::16-binary-unit(8), tag::16-binary-unit(8), ct::binary>> = Base.decode64!(blob)
+    :crypto.crypto_one_time_aead(:aes_256_gcm, key(), iv, ct, @aad, tag, false)
+  end
+
+  defp key, do: Application.fetch_env!(:my_app, __MODULE__)[:key]
+end
+```
+
+### 2. Wire it into your config module
+
+```elixir
+defmodule MyApp.SystemConfig do
+  use PhoenixFlags,
+    otp_app: :my_app,
+    repo: MyApp.Repo,
+    encryptor: MyApp.FlagEncryptor
+
+  flag "anthropic_api_key",
+    type: :secret,
+    category: "ai",
+    label: "Anthropic API key"
+end
+```
+
+Declaring any `:secret` flag **requires** an `:encryptor` option. Omitting it
+raises a `PhoenixFlags.Error` at compile time; misconfiguring it (module missing
+`encrypt/1` or `decrypt/1`) raises on boot.
+
+### What the admin UI and audit log show
+
+- Dashboard: "Set" / "Not set" with an Edit button. Editing renders a blank
+  password input — operators type the new value, submit empty to clear it.
+  The ciphertext is never sent to the DOM.
+- Audit log (if enabled): `old_value` and `new_value` are stored as
+  `"[redacted]"` when non-empty, and `""` when the secret is cleared. Rotations
+  are still auditable (who + when) without leaking plaintext.
+
+### Caveats
+
+- PhoenixFlags does **no** crypto itself — your encryptor is the entire trust
+  boundary. Key management, rotation, and algorithm choice are on you.
+- `get/2` returns the decrypted plaintext from the `:persistent_term` cache;
+  treat it with the same care as an env var.
+- `all_grouped/0` returns entries with the stored ciphertext in `entry.value`
+  — safe to render in bulk without special handling.
 
 ## Architecture
 
@@ -267,18 +337,18 @@ with two helpers:
 
 ```elixir
 # Auto-generated: MyApp.SystemConfig.Test
-MyApp.SystemConfig.Test.put_override("key", value)   # process dictionary
+MyApp.SystemConfig.Test.stub("key", value)   # process dictionary
 MyApp.SystemConfig.Test.insert_entry("key", value)    # database
 ```
 
 ### Unit Tests (Same Process)
 
-Use `put_override/2` for tests where the config is read in the same process.
+Use `stub/2` for tests where the config is read in the same process.
 No database, no race conditions, safe for `async: true`:
 
 ```elixir
 test "grants access when benefits enabled" do
-  MyApp.SystemConfig.Test.put_override("enable_benefits", true)
+  MyApp.SystemConfig.Test.stub("enable_benefits", true)
 
   assert MyApp.SystemConfig.benefits_enabled?()
   assert MyApp.Access.can_view_benefits?(user)
@@ -309,10 +379,10 @@ end
 
 | Helper | Mechanism | Visible to | Use when |
 |---|---|---|---|
-| `put_override/2` | Process dictionary | Same process only | Unit tests, context tests |
+| `stub/2` | Process dictionary | Same process only | Unit tests, context tests |
 | `insert_entry/3` | Database (Ecto sandbox) | All processes in test | LiveView, integration tests |
 
-`put_override/2` is faster and simpler. Use `insert_entry/3` only when you need
+`stub/2` is faster and simpler. Use `insert_entry/3` only when you need
 cross-process visibility.
 
 ## Versioned Migrations
@@ -402,6 +472,71 @@ MyApp.SystemConfig.update_entry("enable_benefits", %{"value" => "true"})
 #=> {:ok, %Entry{...}}
 ```
 
+## Audit Log
+
+PhoenixFlags includes an opt-in audit log that records every flag value change.
+
+### Setup
+
+Enable audit logging in your config module:
+
+```elixir
+defmodule MyApp.SystemConfig do
+  use PhoenixFlags,
+    otp_app: :my_app,
+    repo: MyApp.Repo,
+    audit: true,
+    actor_fn: &MyApp.SystemConfig.current_user/1
+
+  # Extract the actor from the LiveView socket or Plug conn
+  def current_user(%Phoenix.LiveView.Socket{} = socket) do
+    socket.assigns.current_admin.email
+  end
+
+  def current_user(_), do: "system"
+
+  # ... flag declarations
+end
+```
+
+Then generate a migration to add the audit table:
+
+```elixir
+defmodule MyApp.Repo.Migrations.UpgradeSystemFlagsV2 do
+  use Ecto.Migration
+
+  def up, do: PhoenixFlags.Migration.up(version: 2)
+  def down, do: PhoenixFlags.Migration.down(version: 2)
+end
+```
+
+### How It Works
+
+- **`actor_fn`** is called with the LiveView socket during mount. The returned string is stored as the actor in the audit log.
+- Every successful `update_entry` inserts a row into `system_flags_audit` with the key, old value, new value, actor, and timestamp.
+- When `audit: false` (the default), zero additional code runs — no overhead.
+- Audit insert failures are logged but never block the update.
+
+### Querying the Audit Log
+
+```elixir
+MyApp.SystemConfig.audit_log()
+#=> [%PhoenixFlags.AuditLog{key: "enable_benefits", old_value: "false", new_value: "true", actor: "admin@example.com", ...}, ...]
+
+MyApp.SystemConfig.audit_log("enable_benefits")
+#=> [%PhoenixFlags.AuditLog{...}, ...]  # filtered by key
+```
+
+### Passing Actor from Code
+
+When updating flags outside the dashboard, pass the actor via opts:
+
+```elixir
+MyApp.SystemConfig.update_entry("enable_benefits", %{"value" => "true"},
+  actor: "deploy@ci"
+)
+```
+
 ## Comparison
 
 | | Application env | FunWithFlags | PhoenixFlags |
@@ -422,15 +557,17 @@ MyApp.SystemConfig.update_entry("enable_benefits", %{"value" => "true"})
 | Function | Description |
 |---|---|
 | `get(key, default \\ nil)` | Read a cached value, cast to native type |
-| `update_entry(key, attrs, opts \\ [])` | Update a value, sync cache + cluster. Accepts `:timeout`. |
+| `update_entry(key, attrs, opts \\ [])` | Update a value, sync cache + cluster. Accepts `:timeout` and `:actor`. |
 | `all_grouped()` | All entries grouped by category (for admin UI) |
 | `flags()` | List of declared `PhoenixFlags.Flag` structs |
+| `audit_log()` | All audit entries, newest first (requires `audit: true`) |
+| `audit_log(key)` | Audit entries for a specific key, newest first |
 
 ### Test API (generated in `:test` env as `MyModule.Test`)
 
 | Function | Description |
 |---|---|
-| `put_override(key, value)` | Process-scoped override, no DB |
+| `stub(key, value)` | Process-scoped override, no DB |
 | `insert_entry(key, value, opts)` | DB insert/upsert for cross-process tests |
 
 ### Router API
@@ -446,6 +583,18 @@ MyApp.SystemConfig.update_entry("enable_benefits", %{"value" => "true"})
 | `PhoenixFlags.Migration.up(opts)` | Run migrations up to version |
 | `PhoenixFlags.Migration.down(opts)` | Roll back migrations to version |
 | `PhoenixFlags.Migration.migrated_version()` | Current schema version |
+
+## Development
+
+A standalone dev server is included for manual testing of the dashboard:
+
+```bash
+mix run dev.exs
+```
+
+This boots a minimal Phoenix server on http://localhost:4005 with sample flags,
+audit logging enabled, and auto-opens the browser. It uses its own
+`phoenix_flags_dev` database (created automatically).
 
 ## License
 

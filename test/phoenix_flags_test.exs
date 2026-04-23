@@ -24,7 +24,7 @@ defmodule PhoenixFlags.ServerTest do
     end
 
     test "returns process override when set" do
-      TestConfig.Test.put_override("test_key", 42)
+      TestConfig.Test.stub("test_key", 42)
 
       assert TestConfig.get("test_key") == 42
     end
@@ -38,7 +38,7 @@ defmodule PhoenixFlags.ServerTest do
         label: "Override Test"
       })
 
-      TestConfig.Test.put_override("override_test", true)
+      TestConfig.Test.stub("override_test", true)
 
       assert TestConfig.get("override_test") == true
     end
@@ -245,8 +245,8 @@ defmodule PhoenixFlags.ServerTest do
   end
 
   describe "Test submodule" do
-    test "put_override sets process-scoped value" do
-      TestConfig.Test.put_override("test_flag", true)
+    test "stub sets process-scoped value" do
+      TestConfig.Test.stub("test_flag", true)
 
       assert TestConfig.get("test_flag") == true
     end
@@ -272,8 +272,8 @@ defmodule PhoenixFlags.ServerTest do
   end
 
   describe "process isolation" do
-    test "put_override is not visible to other processes" do
-      TestConfig.Test.put_override("isolated_key", :my_value)
+    test "stub is not visible to other processes" do
+      TestConfig.Test.stub("isolated_key", :my_value)
 
       # Verify it's visible in the current process
       assert TestConfig.get("isolated_key") == :my_value
@@ -283,10 +283,10 @@ defmodule PhoenixFlags.ServerTest do
       assert Task.await(task) == :not_found
     end
 
-    test "put_override in spawned process is not visible to parent" do
+    test "stub in spawned process is not visible to parent" do
       task =
         Task.async(fn ->
-          TestConfig.Test.put_override("child_key", :child_value)
+          TestConfig.Test.stub("child_key", :child_value)
           TestConfig.get("child_key")
         end)
 
@@ -344,7 +344,7 @@ defmodule PhoenixFlags.ServerTest do
     end
 
     test "benefits_enabled? returns true when overridden" do
-      TestConfig.Test.put_override("enable_benefits", true)
+      TestConfig.Test.stub("enable_benefits", true)
 
       assert TestConfig.benefits_enabled?()
     end

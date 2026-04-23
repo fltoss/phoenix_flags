@@ -1,7 +1,7 @@
 defmodule PhoenixFlags.Type do
   @moduledoc false
 
-  @valid_types ~w(boolean string integer decimal percentage select)a
+  @valid_types ~w(boolean string integer decimal percentage select secret)a
 
   def valid_types, do: @valid_types
 

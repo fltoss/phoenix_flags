@@ -15,11 +15,13 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
                 "no config module found. Use {PhoenixFlags.UI.OnMount, MyApp.SystemConfig} in on_mount or the flags_dashboard router macro."
 
       grouped = config_module.all_grouped()
+      actor = resolve_actor(config_module, socket)
 
       {:ok,
        socket
        |> assign(:page_title, "PhoenixFlags")
        |> assign(:config_module, config_module)
+       |> assign(:actor, actor)
        |> assign(:grouped_configs, grouped)
        |> assign(:forms, build_forms(grouped))
        |> assign(:editing_key, nil)}
@@ -44,7 +46,7 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
       current = config.get(key)
       new_value = if current, do: "false", else: "true"
 
-      case config.update_entry(key, %{"value" => new_value}) do
+      case config.update_entry(key, %{"value" => new_value}, actor: socket.assigns.actor) do
         {:ok, _entry} ->
           {:noreply, reload(socket)}
 
@@ -57,7 +59,7 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
     def handle_event("pf-save", %{"key" => key, "entry" => entry_params}, socket) do
       config = socket.assigns.config_module
 
-      case config.update_entry(key, entry_params) do
+      case config.update_entry(key, entry_params, actor: socket.assigns.actor) do
         {:ok, _entry} ->
           {:noreply, reload(socket) |> assign(:editing_key, nil)}
 
@@ -120,6 +122,20 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
       |> Map.new(fn entry ->
         {entry.key, to_form(Entry.changeset(entry, %{}), as: :entry)}
       end)
+    end
+
+    defp resolve_actor(config_module, socket) do
+      case PhoenixFlags.Server.config(config_module) do
+        %{audit: true, actor_fn: actor_fn} when is_function(actor_fn, 1) ->
+          try do
+            actor_fn.(socket)
+          rescue
+            _ -> nil
+          end
+
+        _ ->
+          nil
+      end
     end
   end
 end

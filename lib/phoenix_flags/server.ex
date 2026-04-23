@@ -42,7 +42,7 @@ defmodule PhoenixFlags.Server do
   end
 
   defp get_uncached(config, instance, key, default) do
-    case PhoenixFlags.Testing.get_override(instance, key) do
+    case PhoenixFlags.Testing.get_stub(instance, key) do
       {:ok, value} -> value
       :none -> fallback_read(config, key, default)
     end
@@ -63,16 +63,58 @@ defmodule PhoenixFlags.Server do
   """
   def update_entry(instance, key, attrs, opts \\ []) do
     config = get_config(instance)
+    actor = Keyword.get(opts, :actor)
 
     if config.cache_enabled do
       timeout = Keyword.get(opts, :timeout, 5_000)
-      GenServer.call(instance, {:update, key, attrs}, timeout)
+      GenServer.call(instance, {:update, key, attrs, actor}, timeout)
     else
       case config.repo.get_by(Entry, key: key) do
-        nil -> {:error, :not_found}
-        entry -> entry |> Entry.changeset(attrs) |> config.repo.update()
+        nil ->
+          {:error, :not_found}
+
+        entry ->
+          old_value = entry.value
+          attrs = maybe_encrypt(attrs, entry.type, config)
+
+          case entry |> Entry.changeset(attrs) |> config.repo.update() do
+            {:ok, updated} ->
+              maybe_audit(config, key, old_value, updated.value, entry.type, actor)
+              {:ok, updated}
+
+            error ->
+              error
+          end
       end
     end
+  end
+
+  @doc """
+  Returns all audit log entries, newest first.
+  """
+  def audit_log(instance) do
+    import Ecto.Query
+    config = get_config(instance)
+    config.repo.all(from(a in PhoenixFlags.AuditLog, order_by: [desc: a.inserted_at]))
+  end
+
+  @doc """
+  Returns audit log entries for a specific key, newest first.
+  """
+  def audit_log(instance, key) do
+    import Ecto.Query
+    config = get_config(instance)
+
+    config.repo.all(
+      from(a in PhoenixFlags.AuditLog, where: a.key == ^key, order_by: [desc: a.inserted_at])
+    )
+  end
+
+  @doc """
+  Returns the config for the given instance. Used by the UI to resolve actor.
+  """
+  def config(instance) do
+    :persistent_term.get({PhoenixFlags, instance, :config})
   end
 
   @doc """
@@ -107,6 +149,7 @@ defmodule PhoenixFlags.Server do
   @impl true
   def init(%Config{} = config) do
     Process.flag(:trap_exit, true)
+    validate_encryptor!(config)
     :persistent_term.put(config_key(config.name), config)
     store_flag_order(config)
     seed_flags(config)
@@ -114,13 +157,34 @@ defmodule PhoenixFlags.Server do
     {:ok, config}
   end
 
+  defp validate_encryptor!(%Config{encryptor: nil, name: name} = _config) do
+    if Enum.any?(name.flags(), &(&1.type == :secret)) do
+      raise PhoenixFlags.Error,
+            "#{inspect(name)} declares :secret flags but no :encryptor is configured. " <>
+              "Add `encryptor: MyApp.Encryptor` to your `use PhoenixFlags` options; the module " <>
+              "must export `encrypt/1` and `decrypt/1`."
+    end
+  end
+
+  defp validate_encryptor!(%Config{encryptor: encryptor, name: name}) do
+    Code.ensure_loaded(encryptor)
+
+    unless function_exported?(encryptor, :encrypt, 1) and function_exported?(encryptor, :decrypt, 1) do
+      raise PhoenixFlags.Error,
+            "encryptor #{inspect(encryptor)} for #{inspect(name)} must export encrypt/1 and decrypt/1"
+    end
+  end
+
   @impl true
-  def handle_call({:update, key, attrs}, _from, %Config{} = config) do
+  def handle_call({:update, key, attrs, actor}, _from, %Config{} = config) do
     case config.repo.get_by(Entry, key: key) do
       nil ->
         {:reply, {:error, :not_found}, config}
 
       entry ->
+        old_value = entry.value
+        attrs = maybe_encrypt(attrs, entry.type, config)
+
         entry
         |> Entry.changeset(attrs)
         |> config.repo.update()
@@ -135,6 +199,7 @@ defmodule PhoenixFlags.Server do
                 )
             end
 
+            maybe_audit(config, key, old_value, updated.value, entry.type, actor)
             notify_peers(config)
             {:reply, {:ok, updated}, config}
 
@@ -323,7 +388,7 @@ defmodule PhoenixFlags.Server do
     entries = config.repo.all(Entry)
 
     values =
-      Map.new(entries, fn entry -> {entry.key, Entry.cast_value(entry.value, entry.type)} end)
+      Map.new(entries, fn entry -> {entry.key, decrypted_cast_value(entry, config)} end)
 
     :persistent_term.put(cache_key(config.name), {values, entries})
   end
@@ -331,10 +396,27 @@ defmodule PhoenixFlags.Server do
   defp patch_cache(%Config{} = config, %Entry{} = updated) do
     {values, entries} = read_persistent_term(cache_key(config.name), {%{}, []})
 
-    new_values = Map.put(values, updated.key, Entry.cast_value(updated.value, updated.type))
+    new_values = Map.put(values, updated.key, decrypted_cast_value(updated, config))
     new_entries = Enum.map(entries, fn e -> if e.key == updated.key, do: updated, else: e end)
 
     :persistent_term.put(cache_key(config.name), {new_values, new_entries})
+  end
+
+  defp decrypted_cast_value(%Entry{type: "secret", value: ""}, _config), do: nil
+
+  defp decrypted_cast_value(%Entry{type: "secret", value: value, key: key}, %Config{
+         encryptor: encryptor
+       })
+       when not is_nil(encryptor) do
+    encryptor.decrypt(value)
+  rescue
+    error ->
+      Logger.warning("PhoenixFlags: failed to decrypt secret #{key}: #{inspect(error)}")
+      nil
+  end
+
+  defp decrypted_cast_value(%Entry{value: value, type: type}, _config) do
+    Entry.cast_value(value, type)
   end
 
   defp store_flag_order(%Config{} = config) do
@@ -364,9 +446,51 @@ defmodule PhoenixFlags.Server do
       default
   end
 
+  defp maybe_audit(%Config{audit: true} = config, key, old_value, new_value, type, actor) do
+    config.repo.insert(%PhoenixFlags.AuditLog{
+      key: key,
+      old_value: redact_if_secret(old_value, type),
+      new_value: redact_if_secret(new_value, type),
+      actor: actor || "unknown"
+    })
+  rescue
+    error ->
+      Logger.error("PhoenixFlags: failed to insert audit log: #{inspect(error)}")
+  end
+
+  defp maybe_audit(_config, _key, _old_value, _new_value, _type, _actor), do: :ok
+
+  defp redact_if_secret("", _type), do: ""
+  defp redact_if_secret(nil, _type), do: nil
+  defp redact_if_secret(_value, "secret"), do: "[redacted]"
+  defp redact_if_secret(value, _type), do: value
+
+  defp maybe_encrypt(attrs, "secret", %Config{encryptor: encryptor}) when not is_nil(encryptor) do
+    case fetch_value(attrs) do
+      {:ok, _key, ""} -> attrs
+      {:ok, map_key, value} -> Map.put(attrs, map_key, encryptor.encrypt(value))
+      :error -> attrs
+    end
+  end
+
+  defp maybe_encrypt(attrs, _type, _config), do: attrs
+
+  defp fetch_value(%{"value" => value}), do: {:ok, "value", value}
+  defp fetch_value(%{value: value}), do: {:ok, :value, value}
+  defp fetch_value(_), do: :error
+
   defp notify_peers(%Config{} = config) do
     for node <- Node.list() do
-      send({config.name, node}, :reload)
+      case :erlang.send({config.name, node}, :reload, [:noconnect, :nosuspend]) do
+        :ok ->
+          :ok
+
+        :noconnect ->
+          Logger.warning("PhoenixFlags: peer #{node} is unreachable")
+
+        :nosuspend ->
+          Logger.warning("PhoenixFlags: peer #{node} send buffer full, skipping notification")
+      end
     end
   end
 

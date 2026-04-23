@@ -31,18 +31,29 @@ if Code.ensure_loaded?(Phoenix.LiveView.Router) do
     defmacro flags_dashboard(path, opts) do
       quote bind_quoted: binding() do
         scope path, alias: false, as: false do
-          {session_name, session_opts, route_opts} =
+          {session_name, session_opts, route_opts, app_js} =
             PhoenixFlags.Router.__options__(opts)
 
           import Phoenix.LiveView.Router, only: [live: 4, live_session: 3]
-          import Phoenix.Router, only: [match: 5]
+          import Phoenix.Router, only: [match: 5, pipeline: 2, pipe_through: 1, plug: 2]
 
           # Serve the self-contained CSS asset
           match(:get, "/css-:hash", PhoenixFlags.UI.Assets, :css, [])
 
+          pipeline :phoenix_flags_assigns do
+            plug(:phoenix_flags_assign_app_js, app_js)
+          end
+
+          pipe_through(:phoenix_flags_assigns)
+
           live_session session_name, session_opts do
             live("/", PhoenixFlags.UI.DashboardLive, :index, route_opts)
           end
+        end
+
+        @doc false
+        def phoenix_flags_assign_app_js(conn, app_js) do
+          Plug.Conn.assign(conn, :app_js, app_js)
         end
       end
     end
@@ -58,7 +69,7 @@ if Code.ensure_loaded?(Phoenix.LiveView.Router) do
         root_layout: {PhoenixFlags.UI.Layouts, :root},
         layout: {PhoenixFlags.UI.Layouts, :live},
         on_mount: on_mount,
-        session: {__MODULE__, :__session__, [config, app_js]}
+        session: {__MODULE__, :__session__, [config]}
       ]
 
       route_opts = [
@@ -67,12 +78,12 @@ if Code.ensure_loaded?(Phoenix.LiveView.Router) do
 
       session_name = :"phoenix_flags_#{config}"
 
-      {session_name, session_opts, route_opts}
+      {session_name, session_opts, route_opts, app_js}
     end
 
     @doc false
-    def __session__(_conn, config, app_js) do
-      %{"config" => config, "app_js" => app_js}
+    def __session__(_conn, config) do
+      %{"config" => config}
     end
   end
 end

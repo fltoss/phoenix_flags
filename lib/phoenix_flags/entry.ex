@@ -37,13 +37,22 @@ defmodule PhoenixFlags.Entry do
 
   @doc """
   Changeset for updating an entry's value. Only `:value` is writable.
+
+  `:secret` entries accept `""` as a way to clear the stored value; for every
+  other type, `""` is still treated as missing.
   """
   def changeset(entry, attrs) do
+    secret? = entry.type == "secret"
+    empty_values = if secret?, do: [], else: [""]
+
     entry
-    |> cast(attrs, [:value])
-    |> validate_required([:value])
+    |> cast(attrs, [:value], empty_values: empty_values)
+    |> maybe_validate_required(secret?)
     |> validate_by_type()
   end
+
+  defp maybe_validate_required(changeset, true = _secret?), do: changeset
+  defp maybe_validate_required(changeset, false), do: validate_required(changeset, [:value])
 
   defp validate_by_type(changeset) do
     type = get_field(changeset, :type)

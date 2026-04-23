@@ -2,16 +2,16 @@ defmodule PhoenixFlags.Testing do
   @moduledoc """
   Test helpers for PhoenixFlags.
 
-  ## Process-Scoped Overrides
+  ## Process-Scoped Stubs
 
-  `put_override/3` stores a value in the process dictionary, scoped to the
+  `stub/3` stores a value in the process dictionary, scoped to the
   calling process. When `cache_enabled: false` (test env), `get/3` checks
   the process dictionary before falling back to the database.
 
   This avoids DB writes and race conditions in async tests:
 
       setup do
-        MyApp.SystemConfig.Test.put_override("enable_benefits", true)
+        MyApp.SystemConfig.Test.stub("enable_benefits", true)
         :ok
       end
 
@@ -25,16 +25,16 @@ defmodule PhoenixFlags.Testing do
   """
 
   @doc """
-  Sets a per-process config override. Only effective when `cache_enabled: false`.
+  Sets a per-process config stub. Only effective when `cache_enabled: false`.
   """
-  def put_override(instance, key, value) do
+  def stub(instance, key, value) do
     Process.put({PhoenixFlags, instance, key}, value)
   end
 
   @doc """
-  Reads a per-process override. Returns `{:ok, value}` or `:none`.
+  Reads a per-process stub. Returns `{:ok, value}` or `:none`.
   """
-  def get_override(instance, key) do
+  def get_stub(instance, key) do
     case Process.get({PhoenixFlags, instance, key}, :__psf_not_set__) do
       :__psf_not_set__ -> :none
       value -> {:ok, value}

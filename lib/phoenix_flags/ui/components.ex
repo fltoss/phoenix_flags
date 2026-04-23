@@ -31,6 +31,47 @@ if Code.ensure_loaded?(Phoenix.Component) do
       """
     end
 
+    def config_row(%{entry: %{type: "secret"}, editing: false} = assigns) do
+      ~H"""
+      <div class="pf-row">
+        <.entry_info entry={@entry} />
+        <div class="pf-row-actions">
+          <span class="pf-row-value">{if @entry.value == "", do: "Not set", else: "Set"}</span>
+          <button phx-click="pf-edit" phx-value-key={@entry.key} class="pf-row-edit-btn">
+            Edit
+          </button>
+        </div>
+      </div>
+      """
+    end
+
+    def config_row(%{entry: %{type: "secret"}, editing: true} = assigns) do
+      ~H"""
+      <div class="pf-row-editing">
+        <form phx-submit="pf-save" phx-value-key={@entry.key}>
+          <div class="pf-row-info">
+            <.entry_info entry={@entry} />
+            <div class="pf-input-wrap">
+              <input
+                type="password"
+                name="entry[value]"
+                value=""
+                autocomplete="new-password"
+                placeholder="Enter new value (leave blank to clear)"
+                class={input_class(@form, "pf-input")}
+              />
+              <.field_errors errors={@form[:value].errors} />
+            </div>
+          </div>
+          <div class="pf-edit-actions">
+            <button type="submit" class="pf-btn pf-btn-primary">Save</button>
+            <button type="button" phx-click="pf-cancel" class="pf-btn">Cancel</button>
+          </div>
+        </form>
+      </div>
+      """
+    end
+
     def config_row(%{editing: false} = assigns) do
       ~H"""
       <div class="pf-row">
