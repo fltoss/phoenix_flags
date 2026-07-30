@@ -30,30 +30,36 @@ if Code.ensure_loaded?(Phoenix.LiveView.Router) do
     """
     defmacro flags_dashboard(path, opts) do
       quote bind_quoted: binding() do
-        scope path, alias: false, as: false do
-          {session_name, session_opts, route_opts, app_js} =
-            PhoenixFlags.Router.__options__(opts)
+        {session_name, pipeline_name, session_opts, route_opts, app_js} =
+          PhoenixFlags.Router.__options__(opts)
 
+        scope path, alias: false, as: false do
           import Phoenix.LiveView.Router, only: [live: 4, live_session: 3]
           import Phoenix.Router, only: [match: 5, pipeline: 2, pipe_through: 1, plug: 2]
 
           # Serve the self-contained CSS asset
           match(:get, "/css-:hash", PhoenixFlags.UI.Assets, :css, [])
 
-          pipeline :phoenix_flags_assigns do
+          # The pipeline name must be unique per mounted dashboard: pipelines
+          # are plain router functions, so a second `flags_dashboard` call
+          # with a shared name would add a dead duplicate clause and silently
+          # reuse the first mount's :app_js.
+          pipeline pipeline_name do
             plug(:phoenix_flags_assign_app_js, app_js)
           end
 
-          pipe_through(:phoenix_flags_assigns)
+          pipe_through(pipeline_name)
 
           live_session session_name, session_opts do
             live("/", PhoenixFlags.UI.DashboardLive, :index, route_opts)
           end
         end
 
-        @doc false
-        def phoenix_flags_assign_app_js(conn, app_js) do
-          Plug.Conn.assign(conn, :app_js, app_js)
+        unless Module.defines?(__MODULE__, {:phoenix_flags_assign_app_js, 2}) do
+          @doc false
+          def phoenix_flags_assign_app_js(conn, app_js) do
+            Plug.Conn.assign(conn, :app_js, app_js)
+          end
         end
       end
     end
@@ -77,8 +83,9 @@ if Code.ensure_loaded?(Phoenix.LiveView.Router) do
       ]
 
       session_name = :"phoenix_flags_#{config}"
+      pipeline_name = :"phoenix_flags_assigns_#{config}"
 
-      {session_name, session_opts, route_opts, app_js}
+      {session_name, pipeline_name, session_opts, route_opts, app_js}
     end
 
     @doc false

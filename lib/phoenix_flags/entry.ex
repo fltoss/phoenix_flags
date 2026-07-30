@@ -14,6 +14,7 @@ defmodule PhoenixFlags.Entry do
   | `decimal`    | `"3000"`        | `Decimal.new("3000")`| must parse as decimal         |
   | `percentage` | `"50"`          | `Decimal.new("50")`  | 0..100                        |
   | `select`     | `"ses"`         | `"ses"`              | none (app-defined)            |
+  | `secret`     | ciphertext      | decrypted plaintext  | none (encrypted at rest)      |
   """
 
   use Ecto.Schema

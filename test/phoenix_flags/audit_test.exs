@@ -49,6 +49,18 @@ defmodule PhoenixFlags.AuditTest do
 
       assert TestRepo.aggregate(AuditLog, :count) == 0
     end
+
+    test "audit_log raises a clear error instead of a database error" do
+      {module, _config} = start_server!(audit: false)
+
+      assert_raise PhoenixFlags.Error, ~r/not configured with `audit: true`/, fn ->
+        Server.audit_log(module)
+      end
+
+      assert_raise PhoenixFlags.Error, ~r/not configured with `audit: true`/, fn ->
+        Server.audit_log(module, "flag_a")
+      end
+    end
   end
 
   describe "audit enabled" do

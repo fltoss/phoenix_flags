@@ -91,23 +91,40 @@ defmodule PhoenixFlags.Server do
 
   @doc """
   Returns all audit log entries, newest first.
+
+  Raises `PhoenixFlags.Error` unless the instance is configured with `audit: true`.
   """
   def audit_log(instance) do
     import Ecto.Query
-    config = get_config(instance)
-    config.repo.all(from(a in PhoenixFlags.AuditLog, order_by: [desc: a.inserted_at]))
+    config = ensure_audit_enabled!(get_config(instance))
+
+    config.repo.all(from(a in PhoenixFlags.AuditLog, order_by: [desc: a.inserted_at, desc: a.id]))
   end
 
   @doc """
   Returns audit log entries for a specific key, newest first.
+
+  Raises `PhoenixFlags.Error` unless the instance is configured with `audit: true`.
   """
   def audit_log(instance, key) do
     import Ecto.Query
-    config = get_config(instance)
+    config = ensure_audit_enabled!(get_config(instance))
 
     config.repo.all(
-      from(a in PhoenixFlags.AuditLog, where: a.key == ^key, order_by: [desc: a.inserted_at])
+      from(a in PhoenixFlags.AuditLog,
+        where: a.key == ^key,
+        order_by: [desc: a.inserted_at, desc: a.id]
+      )
     )
+  end
+
+  defp ensure_audit_enabled!(%Config{audit: true} = config), do: config
+
+  defp ensure_audit_enabled!(%Config{name: name}) do
+    raise PhoenixFlags.Error,
+          "audit_log is not available because #{inspect(name)} is not configured with " <>
+            "`audit: true`. Enable it in your `use PhoenixFlags` options and run the V2 " <>
+            "migration (PhoenixFlags.Migration.up(version: 2)) to create the audit table."
   end
 
   @doc """
@@ -150,10 +167,12 @@ defmodule PhoenixFlags.Server do
   def init(%Config{} = config) do
     Process.flag(:trap_exit, true)
     validate_encryptor!(config)
+    claim_repo!(config)
     :persistent_term.put(config_key(config.name), config)
     store_flag_order(config)
     seed_flags(config)
     load_cache(config)
+    schedule_refresh(config)
     {:ok, config}
   end
 
@@ -169,7 +188,8 @@ defmodule PhoenixFlags.Server do
   defp validate_encryptor!(%Config{encryptor: encryptor, name: name}) do
     Code.ensure_loaded(encryptor)
 
-    unless function_exported?(encryptor, :encrypt, 1) and function_exported?(encryptor, :decrypt, 1) do
+    unless function_exported?(encryptor, :encrypt, 1) and
+             function_exported?(encryptor, :decrypt, 1) do
       raise PhoenixFlags.Error,
             "encryptor #{inspect(encryptor)} for #{inspect(name)} must export encrypt/1 and decrypt/1"
     end
@@ -177,9 +197,17 @@ defmodule PhoenixFlags.Server do
 
   @impl true
   def handle_call({:update, key, attrs, actor}, _from, %Config{} = config) do
+    {:reply, do_update(config, key, attrs, actor), config}
+  end
+
+  # A DB error (connection loss, constraint violation, ...) must not crash
+  # the Server: that would erase nothing but still restart the process and
+  # re-seed. Convert exceptions into an error changeset the caller (and the
+  # dashboard form) can render.
+  defp do_update(%Config{} = config, key, attrs, actor) do
     case config.repo.get_by(Entry, key: key) do
       nil ->
-        {:reply, {:error, :not_found}, config}
+        {:error, :not_found}
 
       entry ->
         old_value = entry.value
@@ -201,12 +229,23 @@ defmodule PhoenixFlags.Server do
 
             maybe_audit(config, key, old_value, updated.value, entry.type, actor)
             notify_peers(config)
-            {:reply, {:ok, updated}, config}
+            {:ok, updated}
 
           {:error, changeset} ->
-            {:reply, {:error, changeset}, config}
+            {:error, changeset}
         end
     end
+  rescue
+    error ->
+      Logger.error("PhoenixFlags: failed to update #{key}: #{inspect(error)}")
+
+      changeset =
+        %Entry{key: key}
+        |> Ecto.Changeset.change()
+        |> Ecto.Changeset.add_error(:value, "could not be saved (database error)")
+        |> Map.put(:action, :update)
+
+      {:error, changeset}
   end
 
   @impl true
@@ -222,17 +261,30 @@ defmodule PhoenixFlags.Server do
   end
 
   @impl true
+  def handle_info(:refresh, %Config{} = config) do
+    try do
+      load_cache(config)
+    rescue
+      error ->
+        Logger.error("PhoenixFlags: periodic cache refresh failed: #{inspect(error)}")
+    end
+
+    schedule_refresh(config)
+    {:noreply, config}
+  end
+
+  @impl true
   def handle_info(_msg, config) do
     {:noreply, config}
   end
 
   @impl true
   def terminate(_reason, %Config{} = config) do
-    # Only erase the config and order keys. Leave cache intact so that
-    # get/3 can still serve (possibly stale) values during a restart.
-    # init/1 will overwrite them with fresh data.
-    :persistent_term.erase(config_key(config.name))
-    :persistent_term.erase(order_key(config.name))
+    # Leave the cache, config, and order keys intact so that get/3 and
+    # all_grouped/0 can keep serving (possibly stale) values during a
+    # restart. init/1 overwrites them with fresh data. Only the repo
+    # claim is released — it guards concurrently *running* instances.
+    release_repo_claim(config)
   rescue
     error ->
       Logger.debug("PhoenixFlags: terminate cleanup failed: #{inspect(error)}")
@@ -247,6 +299,7 @@ defmodule PhoenixFlags.Server do
     declared_flags =
       config.name.flags()
       |> Enum.map(&PhoenixFlags.Flag.to_seed_map/1)
+      |> Enum.map(&encrypt_seed_value(&1, config))
 
     declared_by_key = Map.new(declared_flags, &{&1.key, &1})
     declared_keys = MapSet.new(declared_flags, & &1.key)
@@ -384,6 +437,17 @@ defmodule PhoenixFlags.Server do
   defp maybe_change(changes, _field, same, same), do: changes
   defp maybe_change(changes, field, _old, new), do: Map.put(changes, field, new)
 
+  # Secret defaults must never reach the database as plaintext. Encrypting
+  # here covers both seed inserts and the value reset on type changes.
+  defp encrypt_seed_value(%{type: "secret", value: value} = seed_map, %Config{
+         encryptor: encryptor
+       })
+       when value not in [nil, ""] and not is_nil(encryptor) do
+    %{seed_map | value: encryptor.encrypt(value)}
+  end
+
+  defp encrypt_seed_value(seed_map, _config), do: seed_map
+
   defp load_cache(%Config{} = config) do
     entries = config.repo.all(Entry)
 
@@ -408,7 +472,20 @@ defmodule PhoenixFlags.Server do
          encryptor: encryptor
        })
        when not is_nil(encryptor) do
-    encryptor.decrypt(value)
+    # Some crypto APIs (e.g. :crypto.crypto_one_time_aead/7) signal failure
+    # by returning the atom :error instead of raising — never cache that as
+    # if it were the plaintext.
+    case encryptor.decrypt(value) do
+      plaintext when is_binary(plaintext) ->
+        plaintext
+
+      other ->
+        Logger.warning(
+          "PhoenixFlags: failed to decrypt secret #{key}: decrypt/1 returned #{inspect(other)}"
+        )
+
+        nil
+    end
   rescue
     error ->
       Logger.warning("PhoenixFlags: failed to decrypt secret #{key}: #{inspect(error)}")
@@ -434,7 +511,9 @@ defmodule PhoenixFlags.Server do
 
   defp fallback_read(%Config{} = config, key, default) do
     case config.repo.get_by(Entry, key: key) do
-      %Entry{value: value, type: type} -> Entry.cast_value(value, type)
+      # Same pipeline as the cached path — secrets must be decrypted here
+      # too, or uncached reads would return the stored ciphertext.
+      %Entry{} = entry -> decrypted_cast_value(entry, config)
       nil -> default
     end
   rescue
@@ -502,9 +581,75 @@ defmodule PhoenixFlags.Server do
     instance |> cache_key() |> read_persistent_term({%{}, []}) |> elem(1)
   end
 
+  # Two config modules with *different* flag declarations sharing one repo
+  # would delete each other's rows at seed time (undeclared keys are removed).
+  # Same declarations are allowed — that's the normal multi-node cluster
+  # scenario exercised with two local instances in tests.
+  defp claim_repo!(%Config{repo: repo, name: name} = config) do
+    claim_key = repo_claim_key(repo)
+    declared_keys = declared_key_set(config)
+    claim = %{name: name, keys: declared_keys}
+
+    case read_persistent_term(claim_key, nil) do
+      nil ->
+        :persistent_term.put(claim_key, claim)
+
+      %{name: ^name} ->
+        :persistent_term.put(claim_key, claim)
+
+      %{name: other, keys: other_keys} ->
+        cond do
+          not instance_alive?(other) ->
+            :persistent_term.put(claim_key, claim)
+
+          MapSet.equal?(declared_keys, other_keys) ->
+            :ok
+
+          true ->
+            raise PhoenixFlags.Error,
+                  "#{inspect(name)} and #{inspect(other)} both use repo #{inspect(repo)} " <>
+                    "but declare different flags. PhoenixFlags stores all flags in one " <>
+                    "system_flags table and removes undeclared keys at startup, so two " <>
+                    "config modules on the same repo would delete each other's flags. " <>
+                    "Use one config module per repo."
+        end
+    end
+  end
+
+  defp release_repo_claim(%Config{repo: repo, name: name}) do
+    claim_key = repo_claim_key(repo)
+
+    case read_persistent_term(claim_key, nil) do
+      %{name: ^name} -> :persistent_term.erase(claim_key)
+      _ -> :ok
+    end
+  end
+
+  defp instance_alive?(instance) when is_atom(instance) do
+    is_pid(Process.whereis(instance))
+  end
+
+  defp declared_key_set(%Config{name: name}) do
+    MapSet.new(name.flags(), fn
+      %PhoenixFlags.Flag{key: key} -> key
+      %{key: key} -> key
+    end)
+  end
+
+  defp schedule_refresh(%Config{cache_enabled: true, refresh_interval: interval})
+       when is_integer(interval) and interval > 0 do
+    # Jitter avoids synchronised reload stampedes across cluster nodes.
+    jitter = :rand.uniform(max(div(interval, 10), 1))
+    Process.send_after(self(), :refresh, interval + jitter)
+    :ok
+  end
+
+  defp schedule_refresh(%Config{}), do: :ok
+
   defp cache_key(instance), do: {PhoenixFlags, instance, :cache}
   defp config_key(instance), do: {PhoenixFlags, instance, :config}
   defp order_key(instance), do: {PhoenixFlags, instance, :order}
+  defp repo_claim_key(repo), do: {PhoenixFlags, :repo_claim, repo}
 
   defp get_config(instance) do
     :persistent_term.get(config_key(instance))

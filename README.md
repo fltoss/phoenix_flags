@@ -30,7 +30,8 @@ checks, and a simple API for building admin UIs. One dependency, no external ser
 - **Typed values** — boolean, integer, decimal, percentage, select, string
 - **Compile-time validation** — `flag/2` macro validates keys, types, and defaults at compile time
 - **Declarative flags** — define flags in code, auto-seeded on startup, stale flags auto-removed
-- **Cluster-aware** — writes replicate to all connected nodes automatically
+- **Cluster-aware** — writes notify all connected nodes immediately; a periodic
+  refresh heals nodes that missed a notification (partition, restart)
 - **Test-friendly** — process dictionary overrides (no DB, no races) + Ecto sandbox helpers
 - **Embedded admin dashboard** — LiveView UI that renders inside your app's layout, mount with one router line
 - **Versioned migrations** — Oban-style migration versioning for schema upgrades
@@ -43,7 +44,7 @@ Add `phoenix_flags` to your dependencies in `mix.exs`:
 ```elixir
 def deps do
   [
-    {:phoenix_flags, "~> 0.1.0"}
+    {:phoenix_flags, "~> 0.6"}
   ]
 end
 ```
@@ -241,7 +242,7 @@ defmodule MyApp.FlagEncryptor do
   end
 
   def decrypt(blob) do
-    <<iv::16-binary-unit(8), tag::16-binary-unit(8), ct::binary>> = Base.decode64!(blob)
+    <<iv::12-binary, tag::16-binary, ct::binary>> = Base.decode64!(blob)
     :crypto.crypto_one_time_aead(:aes_256_gcm, key(), iv, ct, @aad, tag, false)
   end
 
@@ -330,6 +331,21 @@ After a write, the GenServer sends `:reload` directly to its named counterpart
 on all connected nodes via `send({instance_name, node}, :reload)`. No PubSub
 dependency, no Phoenix channels — just Erlang distribution.
 
+A node that misses a notification (network partition, restart in progress, full
+send buffer) is not stale forever: every instance also reloads its cache from
+the database on a jittered interval (`refresh_interval`, default 60 seconds).
+That interval is the upper bound on cross-node staleness. Set
+`refresh_interval: false` to disable the periodic refresh, or lower it if you
+need tighter convergence.
+
+### One Config Module per Repo
+
+All flags live in a single `system_flags` table, and each config module removes
+keys it doesn't declare at startup. Two config modules with different flag
+declarations sharing one repo would therefore delete each other's rows — the
+server detects this at boot and refuses to start. Run one PhoenixFlags module
+per repo (multiple *nodes* running the same module is, of course, fine).
+
 ## Testing
 
 In the `:test` environment, `use PhoenixFlags` generates a `Test` submodule
@@ -388,7 +404,10 @@ cross-process visibility.
 ## Versioned Migrations
 
 PhoenixFlags uses Oban's migration versioning pattern. The schema version is
-stored as a PostgreSQL comment on the `system_flags` table.
+stored in the `system_flags_meta` table (schema V3+; older versions stored it
+as a PostgreSQL comment on the `system_flags` table, and
+`migrated_version/1` still reads the comment on databases that haven't run
+the V3 migration yet).
 
 When upgrading to a new package version with schema changes, generate a new
 migration:
@@ -542,7 +561,7 @@ MyApp.SystemConfig.update_entry("enable_benefits", %{"value" => "true"},
 | | Application env | FunWithFlags | PhoenixFlags |
 |---|---|---|---|
 | Runtime changes | No (deploy required) | Yes | Yes |
-| Typed values | No | Boolean only | 6 types + validation |
+| Typed values | No | Boolean only | 7 types + validation |
 | Caching | N/A (in-memory) | ETS | `:persistent_term` (zero-copy) |
 | Cluster sync | No | Redis/Ecto polling | Direct node messaging |
 | Admin UI | N/A | No | Built-in dashboard, one router line |

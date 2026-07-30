@@ -14,6 +14,11 @@ if Code.ensure_loaded?(Igniter) do
       `PhoenixFlags.Migration.up(version: 2)`, adding the
       `system_flags_audit` table used by the audit log and enabling the
       `:secret` flag type.
+    - `0.6.0` — generates a migration that calls
+      `PhoenixFlags.Migration.up(version: 3)`, widening the value columns
+      from `varchar(255)` to `text` (encrypted secrets easily exceed 255
+      characters) and moving the schema version into the new
+      `system_flags_meta` table.
     """
     use Igniter.Mix.Task
 
@@ -38,7 +43,8 @@ if Code.ensure_loaded?(Igniter) do
       options = igniter.args.options
 
       upgrades = %{
-        "0.5.0" => [&upgrade_to_v2_migration/2]
+        "0.5.0" => [&upgrade_to_v2_migration/2],
+        "0.6.0" => [&upgrade_to_v3_migration/2]
       }
 
       Igniter.Upgrades.run(igniter, from, to, upgrades, options)
@@ -69,6 +75,36 @@ if Code.ensure_loaded?(Igniter) do
           phoenix_flags 0.5.0 adds the `system_flags_audit` table (for the audit log)
           and enables the `:secret` flag type. A migration was generated — run
           `mix ecto.migrate` to apply it.
+          """)
+      end
+    end
+
+    defp upgrade_to_v3_migration(igniter, _opts) do
+      {igniter, repos} = Igniter.Libs.Ecto.list_repos(igniter)
+
+      case List.first(repos) do
+        nil ->
+          Igniter.add_warning(
+            igniter,
+            "phoenix_flags: no Ecto repo found; skipping the v3 migration generator. " <>
+              "Generate it manually with `mix ecto.gen.migration upgrade_system_flags_v3` " <>
+              "and have it call `PhoenixFlags.Migration.up(version: 3)`."
+          )
+
+        repo ->
+          igniter
+          |> Igniter.Libs.Ecto.gen_migration(repo, "upgrade_system_flags_v3",
+            body: """
+              def up, do: PhoenixFlags.Migration.up(version: 3)
+              def down, do: PhoenixFlags.Migration.down(version: 3)
+            """,
+            on_exists: :skip
+          )
+          |> Igniter.add_notice("""
+          phoenix_flags 0.6.0 widens the flag and audit value columns from
+          varchar(255) to text (encrypted secrets exceed 255 characters) and
+          moves the schema version into the new system_flags_meta table.
+          A migration was generated — run `mix ecto.migrate` to apply it.
           """)
       end
     end

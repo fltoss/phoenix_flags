@@ -37,6 +37,25 @@ defmodule PhoenixFlags.SecretTest do
     )
   end
 
+  defmodule SeededSecretConfig do
+    use PhoenixFlags,
+      otp_app: :phoenix_flags,
+      repo: PhoenixFlags.TestRepo,
+      encryptor: PhoenixFlags.SecretTest.Encryptor
+
+    flag("api_key",
+      type: :secret,
+      default: "seeded-secret",
+      category: "ai",
+      label: "API Key"
+    )
+  end
+
+  defmodule ErrorReturningEncryptor do
+    def encrypt(plaintext) when is_binary(plaintext), do: String.reverse(plaintext)
+    def decrypt(_ciphertext), do: :error
+  end
+
   defp cleanup_persistent_term(module) do
     on_exit(fn ->
       for key <- [:cache, :config, :order] do
@@ -114,6 +133,64 @@ defmodule PhoenixFlags.SecretTest do
       )
 
       assert SecretConfig.get("api_key") == "sk-restart"
+    end
+  end
+
+  describe "seeding" do
+    test "a non-empty secret default is encrypted before it reaches the database" do
+      start_cached!(SeededSecretConfig)
+
+      entry = TestRepo.get_by!(Entry, key: "api_key")
+      assert entry.value == "terces-dedees", "expected encrypted (reversed) default in DB"
+      refute entry.value == "seeded-secret"
+
+      assert SeededSecretConfig.get("api_key") == "seeded-secret"
+    end
+  end
+
+  describe "uncached reads" do
+    test "get/2 decrypts secrets when cache_enabled: false" do
+      config = %Config{
+        otp_app: :phoenix_flags,
+        repo: TestRepo,
+        name: SecretConfig,
+        cache_enabled: false,
+        encryptor: Encryptor
+      }
+
+      start_supervised!({Server, config})
+      cleanup_persistent_term(SecretConfig)
+
+      {:ok, _} = SecretConfig.update_entry("api_key", %{"value" => "sk-uncached"})
+
+      entry = TestRepo.get_by!(Entry, key: "api_key")
+      assert entry.value == "dehcacnu-ks", "expected ciphertext at rest"
+
+      assert SecretConfig.get("api_key") == "sk-uncached"
+    end
+  end
+
+  describe "decrypt failure handling" do
+    test "a decrypt returning a non-binary yields nil, never the raw return value" do
+      config = %Config{
+        otp_app: :phoenix_flags,
+        repo: TestRepo,
+        name: SecretConfig,
+        cache_enabled: true,
+        encryptor: ErrorReturningEncryptor
+      }
+
+      start_supervised!({Server, config})
+      cleanup_persistent_term(SecretConfig)
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          {:ok, _} = SecretConfig.update_entry("api_key", %{"value" => "sk-doomed"})
+        end)
+
+      assert log =~ "failed to decrypt secret api_key"
+      refute SecretConfig.get("api_key") == :error
+      assert SecretConfig.get("api_key") == nil
     end
   end
 

@@ -10,7 +10,6 @@ if Code.ensure_loaded?(Igniter) do
     3. Generates the `create_system_flags` migration
     4. Adds `cache_enabled: false` to `config/test.exs`
     5. Adds the module to your application supervision tree
-    6. Adds `@source` directive to `assets/css/app.css` for Tailwind
 
     ## Usage
 

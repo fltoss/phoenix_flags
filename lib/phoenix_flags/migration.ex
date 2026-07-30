@@ -36,7 +36,10 @@ defmodule PhoenixFlags.Migration do
   use Ecto.Migration
 
   @initial_version 1
-  @current_version 2
+  @current_version 3
+  # Version that introduced the system_flags_meta table. From this version on
+  # the schema version lives in that table; below it, in the table comment.
+  @meta_version 3
   @prefix_pattern ~r/^[a-z_][a-z0-9_]*$/
 
   @doc """
@@ -75,21 +78,46 @@ defmodule PhoenixFlags.Migration do
         module.down(%{prefix: prefix})
       end
 
-      if version < @initial_version do
-        execute("COMMENT ON TABLE IF EXISTS #{prefix}.system_flags IS NULL")
-      else
+      # A rollback below the initial version drops the system_flags table
+      # (V01.down), taking the version comment with it — nothing to reset.
+      if version >= @initial_version do
         set_version(prefix, version)
       end
     end
   end
 
   @doc """
-  Returns the current migrated version by reading the table comment.
-  Returns 0 if the table doesn't exist or has no version comment.
+  Returns the current migrated version.
+
+  Reads the `system_flags_meta` table (V3+), falling back to the
+  `system_flags` table comment used by older versions. Returns 0 if the
+  tables don't exist or no version is recorded.
   """
   def migrated_version(prefix \\ "public") do
     validate_prefix!(prefix)
 
+    read_meta_version(prefix) || read_comment_version(prefix) || 0
+  end
+
+  @doc false
+  def current_version, do: @current_version
+
+  # Existence is probed via to_regclass instead of just querying the table:
+  # a failed query would abort the surrounding migration transaction.
+  defp read_meta_version(prefix) do
+    with {:ok, %{rows: [[true]]}} <-
+           repo().query("SELECT to_regclass($1) IS NOT NULL", ["#{prefix}.system_flags_meta"]),
+         {:ok, %{rows: [[version]]}} <-
+           repo().query(
+             "SELECT value FROM #{prefix}.system_flags_meta WHERE key = 'schema_version'"
+           ) do
+      parse_version(version)
+    else
+      _ -> nil
+    end
+  end
+
+  defp read_comment_version(prefix) do
     query = """
     SELECT obj_description(c.oid)
     FROM pg_class c
@@ -99,19 +127,32 @@ defmodule PhoenixFlags.Migration do
     """
 
     case repo().query(query, [prefix]) do
-      {:ok, %{rows: [[version]]}} when is_binary(version) ->
-        case Integer.parse(version) do
-          {v, ""} -> v
-          _ -> 0
-        end
-
-      _ ->
-        0
+      {:ok, %{rows: [[version]]}} -> parse_version(version)
+      _ -> nil
     end
   end
 
-  @doc false
-  def current_version, do: @current_version
+  defp parse_version(version) when is_binary(version) do
+    case Integer.parse(version) do
+      {v, ""} -> v
+      _ -> nil
+    end
+  end
+
+  defp parse_version(_version), do: nil
+
+  # The target store is decided by the version number, not by probing the
+  # database: migration DSL commands are queued and only flush when the host
+  # migration finishes, so at this point a freshly created meta table is not
+  # visible yet. Writing to the meta table for >= @meta_version is safe —
+  # V03 creates it earlier in the same command queue.
+  defp set_version(prefix, version) when is_integer(version) and version >= @meta_version do
+    execute("""
+    INSERT INTO #{prefix}.system_flags_meta (key, value)
+    VALUES ('schema_version', '#{version}')
+    ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+    """)
+  end
 
   defp set_version(prefix, version) when is_integer(version) do
     execute("COMMENT ON TABLE #{prefix}.system_flags IS '#{version}'")

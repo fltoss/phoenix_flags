@@ -145,6 +145,31 @@ defmodule PhoenixFlags.UI.DashboardLiveTest do
       entry = TestRepo.get_by(Entry, key: "toggle_me")
       assert entry.value == "true"
     end
+
+    test "ignores a forged toggle event targeting a non-boolean flag", %{conn: conn} do
+      TestRepo.insert!(%Entry{
+        key: "smtp_host",
+        value: "smtp.example.com",
+        type: "string",
+        category: "system",
+        label: "SMTP Host"
+      })
+
+      {:ok, view, _html} = live(conn, "/flags")
+
+      # No toggle is rendered for a string flag — send the event directly,
+      # as a tampered client could.
+      render_click(view, "pf-toggle", %{"key" => "smtp_host"})
+
+      entry = TestRepo.get_by(Entry, key: "smtp_host")
+      assert entry.value == "smtp.example.com"
+    end
+
+    test "ignores a forged toggle event for an unknown key", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/flags")
+
+      render_click(view, "pf-toggle", %{"key" => "does_not_exist"})
+    end
   end
 
   describe "edit" do

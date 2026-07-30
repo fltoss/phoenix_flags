@@ -42,7 +42,9 @@ defmodule PhoenixFlags do
   - **Reads**: `:persistent_term.get` + `Map.get` — zero-copy, no process calls
   - **Writes**: GenServer updates DB, reloads local cache, notifies peer nodes
   - **Cluster**: After a write, the GenServer sends `:reload` to its counterpart
-    on all connected nodes — no PubSub dependency
+    on all connected nodes — no PubSub dependency. A periodic jittered cache
+    refresh (`refresh_interval`, default 60s) heals nodes that missed a
+    notification.
   """
 
   @doc """
@@ -152,7 +154,7 @@ defmodule PhoenixFlags do
       @doc """
       Returns all audit log entries, newest first.
 
-      Only available when `audit: true` is set.
+      Raises `PhoenixFlags.Error` unless `audit: true` is set.
       """
       def audit_log do
         PhoenixFlags.Server.audit_log(__MODULE__)
@@ -160,6 +162,8 @@ defmodule PhoenixFlags do
 
       @doc """
       Returns audit log entries for a specific flag key, newest first.
+
+      Raises `PhoenixFlags.Error` unless `audit: true` is set.
       """
       def audit_log(key) do
         PhoenixFlags.Server.audit_log(__MODULE__, key)

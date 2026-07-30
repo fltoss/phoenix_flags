@@ -142,7 +142,7 @@ defmodule PhoenixFlags.CachedTest do
   end
 
   describe "terminate/2" do
-    test "erases config key but preserves cache for graceful degradation" do
+    test "preserves cache, config, and order keys so reads degrade to stale values" do
       # Keys exist while running
       {values, entries} = :persistent_term.get({PhoenixFlags, CachedConfig, :cache})
       assert is_map(values)
@@ -151,15 +151,13 @@ defmodule PhoenixFlags.CachedTest do
 
       stop_supervised!(PhoenixFlags.Server)
 
-      # Config key erased — server is no longer "running"
-      assert_raise ArgumentError, fn ->
-        :persistent_term.get({PhoenixFlags, CachedConfig, :config})
-      end
-
-      # Cache preserved — get/3 can serve stale values during restart
+      # All keys preserved — get/3 keeps serving (stale) values during a
+      # restart instead of falling back to call-site defaults.
+      assert is_struct(:persistent_term.get({PhoenixFlags, CachedConfig, :config}))
       {values, entries} = :persistent_term.get({PhoenixFlags, CachedConfig, :cache})
       assert is_map(values)
       assert is_list(entries)
+      assert is_map(:persistent_term.get({PhoenixFlags, CachedConfig, :order}))
     end
   end
 
@@ -192,9 +190,43 @@ defmodule PhoenixFlags.CachedTest do
     end
   end
 
+  describe "periodic refresh" do
+    test ":refresh reloads the cache from the database", %{server: server} do
+      # Change the DB behind the server's back — simulates a write on another
+      # node whose :reload notification this node missed.
+      Entry
+      |> TestRepo.get_by!(key: "cached_str")
+      |> Ecto.Changeset.change(value: "changed-behind-back")
+      |> TestRepo.update!()
+
+      assert CachedConfig.get("cached_str") == "hello"
+
+      send(server, :refresh)
+      :sys.get_state(server)
+
+      assert CachedConfig.get("cached_str") == "changed-behind-back"
+    end
+  end
+
   describe "get/3 resilience" do
-    test "returns default when server is not running" do
+    test "keeps serving cached values while the server is restarting" do
+      assert {:ok, _} = CachedConfig.update_entry("cached_bool", %{"value" => "false"})
+
       stop_supervised!(PhoenixFlags.Server)
+
+      # A flag defaulting to true at the call site must not silently flip
+      # back during a restart — the stale cached value wins.
+      assert CachedConfig.get("cached_bool", true) == false
+      assert CachedConfig.get("cached_int") == 10
+      assert CachedConfig.get("nonexistent", :fallback) == :fallback
+    end
+
+    test "returns default when the server never started" do
+      stop_supervised!(PhoenixFlags.Server)
+
+      for key <- [:cache, :config, :order] do
+        :persistent_term.erase({PhoenixFlags, CachedConfig, key})
+      end
 
       assert CachedConfig.get("cached_bool", :fallback) == :fallback
       assert CachedConfig.get("nonexistent") == nil
@@ -202,8 +234,21 @@ defmodule PhoenixFlags.CachedTest do
   end
 
   describe "all_grouped/0 resilience" do
-    test "returns empty list when server is not running" do
+    test "keeps serving cached entries while the server is restarting" do
       stop_supervised!(PhoenixFlags.Server)
+
+      grouped = CachedConfig.all_grouped()
+      assert [{"alpha", alpha}, {"beta", beta}] = grouped
+      assert length(alpha) == 2
+      assert length(beta) == 1
+    end
+
+    test "returns empty list when the server never started" do
+      stop_supervised!(PhoenixFlags.Server)
+
+      for key <- [:cache, :config, :order] do
+        :persistent_term.erase({PhoenixFlags, CachedConfig, key})
+      end
 
       assert CachedConfig.all_grouped() == []
     end

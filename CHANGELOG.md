@@ -7,6 +7,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-07-30
+
+### Upgrading
+
+Generate the V3 migration with `mix igniter.upgrade phoenix_flags`, or manually:
+
+```elixir
+defmodule MyApp.Repo.Migrations.UpgradeSystemFlagsV3 do
+  use Ecto.Migration
+
+  def up, do: PhoenixFlags.Migration.up(version: 3)
+  def down, do: PhoenixFlags.Migration.down(version: 3)
+end
+```
+
+The upgrade is seamless:
+
+- **Existing databases** (V1 or V2): the migration widens the value columns and moves the schema version from the `system_flags` table comment into the new `system_flags_meta` table. The version is read from the comment during the transition, so no manual steps are needed.
+- **Fresh databases** (new dev machines, CI): your existing migration folder keeps working — the original install migration now builds V3 directly, and older pinned migrations (`up(version: 2)`) become no-ops.
+- **No downtime**: `varchar(255)` → `text` is binary-coercible in PostgreSQL, so the column change is a catalog-only update with no table rewrite, even on large audit tables.
+- **Rollback**: `mix ecto.rollback` of the V3 migration restores the previous scheme exactly (columns narrowed back — this fails if any stored value now exceeds 255 characters — and the version written back to the table comment).
+- **Caveat**: if you ever need to downgrade the package below 0.6.0, roll back the V3 migration *first* (while 0.6.0 is still installed). Older releases only know the comment-based version store, which V3 clears.
+
+### Fixed
+
+- **Full rollback works again.** `PhoenixFlags.Migration.down(version: 1)` executed invalid SQL (`COMMENT ON TABLE IF EXISTS` does not exist in PostgreSQL) after dropping the table, so `mix ecto.rollback` always failed. The redundant comment reset was removed.
+- **`:secret` defaults are encrypted at seed time.** Previously a `:secret` flag with a non-empty default was written to the database in plaintext, and cached reads then failed to decrypt it. Seeding (and the value reset on type changes) now runs the default through the configured encryptor.
+- **Uncached reads decrypt secrets.** With `cache_enabled: false`, `get/2` returned the stored ciphertext for `:secret` flags instead of the plaintext the cached path returns. Both paths now share the same decrypt-and-cast pipeline.
+- **Server survives database errors during writes.** A `Postgrex.Error` raised inside `update_entry/3` (e.g. connection loss) crashed the GenServer; it is now rescued and returned as an error changeset.
+- **Restarts no longer serve call-site defaults.** `terminate/2` erased the persistent_term config key that `get/3` needs, so every flag read as its default during a Server restart. The cache, config, and order keys are now all left intact and overwritten by `init/1`.
+- **Decrypt failures signalled by return value are handled.** An encryptor returning a non-binary (e.g. `:error` from `:crypto.crypto_one_time_aead/7`) was cached as if it were the plaintext; it now logs a warning and yields `nil`.
+- **README example encryptor could not decrypt its own output** (12-byte IV written, 16-byte IV read). The install snippet also referenced version `0.1.0` and omitted the `organization` option.
+- **Dashboard toggle only accepts boolean flags.** A forged `pf-toggle` event could overwrite any flag (including strings/selects) with `"true"`/`"false"`.
+- **Mounting `flags_dashboard` twice works.** The router macro defined a shared pipeline and plug function per mount, so a second dashboard silently reused the first mount's `:app_js` and emitted duplicate-clause warnings.
+- **Deterministic audit ordering.** Audit queries now tiebreak on `id` — `inserted_at` has second precision, so same-second changes had nondeterministic order.
+
+### Added
+
+- **Migration V03** widens `system_flags.value` and the audit `old_value`/`new_value` columns from `varchar(255)` to `text` (encrypted secrets routinely exceed 255 characters and previously crashed the Server on write), and moves the schema version out of the `system_flags` table comment into a queryable `system_flags_meta` table. Older databases are still detected via the comment fallback, and rolling back V03 restores the comment. `mix igniter.upgrade phoenix_flags` generates the migration.
+- **Periodic cache refresh.** Each instance reloads its cache from the database on a jittered `refresh_interval` (default 60s, `false` to disable), bounding staleness for nodes that miss a `:reload` notification during partitions or restarts.
+- **One-config-module-per-repo guard.** Two config modules with different flag declarations sharing one repo would delete each other's rows at seed time; the Server now detects this at boot and raises with a clear message.
+
+### Changed
+
+- `PhoenixFlags.Config.new!/1` raises on unknown options instead of silently ignoring them (a typo like `audit_enabled:` left auditing off).
+- `audit_log/0` and `audit_log/1` raise a clear `PhoenixFlags.Error` when `audit: true` is not set, instead of failing with a database error about the missing table.
+- `:jason` is now an optional dependency — nothing in `lib/` uses it, so consumers are no longer forced to install it.
+- `usage-rules.md` is now included in the published package.
+
 ## [0.5.0] - 2026-04-23
 
 ### Added

@@ -43,14 +43,23 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
     @impl true
     def handle_event("pf-toggle", %{"key" => key}, socket) do
       config = socket.assigns.config_module
-      current = config.get(key)
-      new_value = if current, do: "false", else: "true"
 
-      case config.update_entry(key, %{"value" => new_value}, actor: socket.assigns.actor) do
-        {:ok, _entry} ->
-          {:noreply, reload(socket)}
+      # The key arrives from client event params — only allow toggling flags
+      # that actually render a toggle, or a forged event could overwrite a
+      # non-boolean flag with "true"/"false".
+      case find_entry(socket, key) do
+        %Entry{type: "boolean"} = entry ->
+          new_value = if entry.value == "true", do: "false", else: "true"
 
-        {:error, _changeset} ->
+          case config.update_entry(key, %{"value" => new_value}, actor: socket.assigns.actor) do
+            {:ok, _entry} ->
+              {:noreply, reload(socket)}
+
+            {:error, _changeset} ->
+              {:noreply, socket}
+          end
+
+        _ ->
           {:noreply, socket}
       end
     end
@@ -99,6 +108,12 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
         </div>
       </div>
       """
+    end
+
+    defp find_entry(socket, key) do
+      socket.assigns.grouped_configs
+      |> Enum.flat_map(fn {_category, entries} -> entries end)
+      |> Enum.find(&(&1.key == key))
     end
 
     defp reload(socket) do

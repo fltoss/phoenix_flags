@@ -393,6 +393,66 @@ defmodule PhoenixFlags.SeedTest do
     end
   end
 
+  describe "repo sharing guard" do
+    test "a second config module with different flags on the same repo refuses to start" do
+      make_module = fn flags ->
+        module_name = :"PhoenixFlags.SeedTest.Guard#{System.unique_integer([:positive])}"
+
+        Module.create(
+          module_name,
+          quote do
+            def flags, do: unquote(Macro.escape(flags))
+          end,
+          Macro.Env.location(__ENV__)
+        )
+
+        module_name
+      end
+
+      module_a =
+        make_module.([
+          %{key: "guard_a", type: "boolean", value: "true", category: "test", label: "A"}
+        ])
+
+      module_b =
+        make_module.([
+          %{key: "guard_b", type: "boolean", value: "true", category: "test", label: "B"}
+        ])
+
+      config_a = %Config{
+        otp_app: :phoenix_flags,
+        repo: TestRepo,
+        name: module_a,
+        cache_enabled: false
+      }
+
+      config_b = %Config{
+        otp_app: :phoenix_flags,
+        repo: TestRepo,
+        name: module_b,
+        cache_enabled: false
+      }
+
+      on_exit(fn -> :persistent_term.erase({PhoenixFlags, :repo_claim, TestRepo}) end)
+
+      Process.flag(:trap_exit, true)
+
+      {:ok, pid_a} = Server.start_link(config_a)
+
+      assert {:error, {%PhoenixFlags.Error{message: message}, _stacktrace}} =
+               Server.start_link(config_b)
+
+      assert message =~ "both use repo"
+      assert message =~ "one config module per repo"
+
+      # module_a's flags were not touched by the refused instance
+      assert TestRepo.get_by(Entry, key: "guard_a")
+      refute TestRepo.get_by(Entry, key: "guard_b")
+
+      GenServer.stop(pid_a)
+    end
+  end
+
   describe "server init without DB" do
     test "crashes cleanly and logs warning when database is unavailable" do
       import ExUnit.CaptureLog
