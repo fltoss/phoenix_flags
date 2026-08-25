@@ -79,6 +79,52 @@ In test environment, a `Test` submodule is automatically generated:
 Stubs are only consulted when `cache_enabled: false`, which is the intended test
 configuration.
 
+## Targeting rules (force a value for a specific key)
+
+Pass a context of attributes and let rules force a value for matching callers.
+Rules live in the database, so adding a beta customer needs no deploy.
+
+```elixir
+# once per request -- a plug, or a LiveView on_mount hook
+PhoenixFlags.put_context(user_id: user.id, company_id: user.company_id)
+
+# then, unchanged call sites
+MyApp.SystemConfig.get("enable_benefits", false)
+
+# or explicit, which wins over the process context
+MyApp.SystemConfig.get("enable_benefits", false, context: %{company_id: 999})
+```
+
+Managing rules:
+
+- `MyApp.SystemConfig.put_target(key, conditions: [...], value: "true")`
+- `MyApp.SystemConfig.targets(key)` — in evaluation order
+- `MyApp.SystemConfig.delete_target(target_id)`
+
+```elixir
+MyApp.SystemConfig.put_target("enable_benefits",
+  conditions: [[attribute: :company_id, operator: :in, values: [123, 456]]],
+  value: "true"
+)
+```
+
+Rules:
+
+- Operators are `:in`, `:not_in`, `:eq`, `:starts_with`. Conditions in one rule
+  are **ANDed**; rules are checked in order and the **first match wins**.
+- Precedence on every read: test stub, then a matching rule, then the stored
+  value or the `:variant` split. A rule therefore overrides an A/B split.
+- **Everything compares as strings.** `%{company_id: 123}` matches `"123"`, and
+  `:company_id` matches `"company_id"`. This is the usual reason a rule does not
+  fire.
+- A **missing attribute never matches**, `:not_in` included.
+- A rule value is validated against the flag's type; a `:variant` rule must name
+  a declared variant.
+- **`:secret` flags cannot be targeted** — the value would be stored as plaintext.
+- The context is **per-process and not inherited**. `Task.async/1` sees none of
+  it; pass `context: PhoenixFlags.context()` in, or set it again inside.
+- Requires the V4 migration (`PhoenixFlags.Migration.up(version: 4)`).
+
 ## Admin dashboard
 
 Mount it with one router line, inside a pipeline that authenticates:
@@ -98,6 +144,9 @@ end
   connection. A pipeline alone leaves the WebSocket mount open.
 - Booleans toggle in place; every other type opens an edit dialog. `:variant`
   flags get a weights editor with a running total that must reach 100.
+- The dialog also lists a flag's targeting rules and can add or delete them
+  (single-condition rules; multi-condition ones are created via `put_target/2`
+  and render there too).
 - Options: `:config` (required), `:on_mount`, `:live_socket_path`, `:app_js`.
 
 ## Database migration

@@ -7,6 +7,94 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-08-25
+
+### Added
+
+- **Targeting rules: force a flag's value for a specific key.** Pass a context of
+  attributes and let ordered rules override the value when it matches — onboard a
+  beta customer, unblock one account, raise a limit for one tenant, without a
+  deploy.
+
+  ```elixir
+  # once per request, in a plug or on_mount hook
+  PhoenixFlags.put_context(user_id: user.id, company_id: user.company_id)
+
+  # unchanged call sites are now targeted
+  MyApp.SystemConfig.get("enable_benefits", false)     #=> true for company 123
+  MyApp.SystemConfig.variant("checkout_flow", user.id) #=> pinned arm for user 7
+
+  # rules, from the dashboard or in code
+  MyApp.SystemConfig.put_target("enable_benefits",
+    conditions: [[attribute: :company_id, operator: :in, values: [123, 456]]],
+    value: "true"
+  )
+  ```
+
+  **Requires migration V4** — `PhoenixFlags.Migration.up(version: 4)`, or
+  `mix igniter.upgrade phoenix_flags` to generate it. Existing flags are
+  unaffected until a rule is added.
+
+  This is the attribute-targeting half of the [AWS AppConfig
+  model](https://docs.aws.amazon.com/appconfig/latest/userguide/appconfig-creating-multi-variant-feature-flags-rules.html)
+  deferred when `:variant` shipped in 0.7.0. Rules are structured rows rather
+  than a string expression DSL, so they can be validated properly and edited in a
+  UI. Conditions live in their own table rather than a `jsonb` column: `jason` is
+  declared optional and unused in `lib/`, and a JSON column would make a JSON
+  library effectively required.
+
+  Details:
+
+  - **Applies to any flag type.** A rule forces a value, validated against that
+    flag's type through the same changeset a dashboard save uses. A `:variant`
+    rule names a declared arm rather than a weights string.
+  - **Precedence**: a test stub, then a matching rule, then the stored value or
+    the weighted split. A rule therefore overrides an A/B split, which is the
+    point of pinning a customer to one arm.
+  - **Operators** `:in`, `:not_in`, `:eq`, `:starts_with`. Conditions within a
+    rule are ANDed; rules are checked in order and the first match wins.
+  - **Everything compares as strings**, so `%{company_id: 123}` matches `"123"`
+    and `:company_id` matches `"company_id"` — consistent with every flag value
+    being stored as a string.
+  - **A missing attribute never matches**, `:not_in` included: "everyone except
+    these" must not sweep in callers we know nothing about.
+  - **`:secret` flags cannot be targeted** — the rule value would sit in the
+    targets table as plaintext, defeating the encryptor.
+  - **Cost when unused is one `:persistent_term` read plus a map lookup**, and a
+    flag with no rules never reads the context. That ordering came from
+    measurement: checking the context first measured *slower* than the read it
+    was avoiding. See `docs/benchmarks.md`.
+  - **The context is per-process and not inherited** by `Task.async/1` and
+    friends; documented, with `context: PhoenixFlags.context()` as the answer.
+  - Cluster replication is free: a rule write triggers a full cache reload and
+    notifies peers, which reload the same way they already do.
+
+- `PhoenixFlags.Context` — `put/1`, `merge/1`, `get/0`, `clear/0`, with
+  `PhoenixFlags.put_context/1` and friends as shorthands.
+- `PhoenixFlags.Target` and `PhoenixFlags.Target.Condition`, with `resolve/2` and
+  `matches?/2` as pure, fuzz-tested functions.
+- Generated `targets/1`, `put_target/2` and `delete_target/1` on every config
+  module; `get/2` becomes `get/3` with a `:context` option, and `variant/3`
+  accepts `:context` too.
+- The dashboard's edit dialog lists a flag's rules and can add or delete them.
+  The forced-value input is constrained to what the flag's type allows — a
+  dropdown of declared variants for `:variant`, true/false for `:boolean`.
+
+### Fixed
+
+- **A single bad `:variant` weights string produced two identical changeset
+  errors**, which the dashboard rendered twice. `Type.validate_value/2` and the
+  declared-name check both parsed the value and both reported the same failure;
+  the name check now skips when the value has already been rejected.
+
+### Changed
+
+- **Benchmarks use their own `phoenix_flags_bench` database**, created and
+  migrated on first run. `bench/bench_helper.exs` pointed at the test database
+  and runs outside the Ecto sandbox, so benchmark writes committed and broke the
+  next `mix test`. The README documented that as a trap; it is now simply gone.
+
+
 ## [0.8.0] - 2026-08-25
 
 ### Changed

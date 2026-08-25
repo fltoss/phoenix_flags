@@ -78,6 +78,8 @@ if Code.ensure_loaded?(Phoenix.Component) do
     attr(:form, :map, required: true)
     attr(:select_options, :list, default: [])
     attr(:variants, :list, default: [])
+    attr(:targets, :list, default: [])
+    attr(:target_error, :string, default: nil)
 
     @doc """
     The edit dialog. Rendered once by the dashboard for whichever flag is being
@@ -95,43 +97,168 @@ if Code.ensure_loaded?(Phoenix.Component) do
           aria-labelledby={"pf-modal-title-#{@entry.key}"}
           phx-mounted={JS.focus_first(to: "##{@entry.key |> modal_body_id()}")}
         >
-          <form
-            id={"pf-form-#{@entry.key}"}
-            phx-submit="pf-save"
-            phx-change={if @entry.type == "variant", do: "pf-validate"}
-            phx-value-key={@entry.key}
-          >
-            <div class="pf-modal-header">
-              <h3 class="pf-modal-title" id={"pf-modal-title-#{@entry.key}"}>{@entry.label}</h3>
-              <button
-                type="button"
-                class="pf-modal-close"
-                phx-click="pf-cancel"
-                aria-label="Close"
-              >
-                &times;
-              </button>
-            </div>
+          <div class="pf-modal-header">
+            <h3 class="pf-modal-title" id={"pf-modal-title-#{@entry.key}"}>{@entry.label}</h3>
+            <button type="button" class="pf-modal-close" phx-click="pf-cancel" aria-label="Close">
+              &times;
+            </button>
+          </div>
 
-            <div class="pf-modal-body" id={modal_body_id(@entry.key)}>
-              <p :if={@entry.description} class="pf-modal-desc">{@entry.description}</p>
+          <div class="pf-modal-body" id={modal_body_id(@entry.key)}>
+            <p :if={@entry.description} class="pf-modal-desc">{@entry.description}</p>
+
+            <%!-- Two sibling forms: HTML forbids nesting, and the targeting
+                  section needs its own submit. --%>
+            <form
+              id={"pf-form-#{@entry.key}"}
+              phx-submit="pf-save"
+              phx-change={if @entry.type == "variant", do: "pf-validate"}
+              phx-value-key={@entry.key}
+            >
               <.config_input
                 entry={@entry}
                 form={@form}
                 select_options={@select_options}
                 variants={@variants}
               />
-            </div>
 
-            <div class="pf-modal-footer">
-              <button type="button" phx-click="pf-cancel" class="pf-btn">Cancel</button>
-              <button type="submit" class="pf-btn pf-btn-primary">Save</button>
-            </div>
-          </form>
+              <div class="pf-modal-footer">
+                <button type="button" phx-click="pf-cancel" class="pf-btn">Cancel</button>
+                <button type="submit" class="pf-btn pf-btn-primary">Save</button>
+              </div>
+            </form>
+
+            <.targeting_section
+              :if={targetable?(@entry)}
+              entry={@entry}
+              targets={@targets}
+              target_error={@target_error}
+              variants={@variants}
+              select_options={@select_options}
+            />
+          </div>
         </div>
       </div>
       """
     end
+
+    # A :secret flag cannot be targeted -- the rule value would be stored as
+    # plaintext -- so the section is not offered for one.
+    defp targetable?(%{type: "secret"}), do: false
+    defp targetable?(_entry), do: true
+
+    defp targeting_section(assigns) do
+      ~H"""
+      <section class="pf-targets">
+        <h4 class="pf-targets-title">Targeting rules</h4>
+        <p class="pf-targets-hint">
+          Checked in order; the first match wins and overrides the value above.
+        </p>
+
+        <p :if={@targets == []} class="pf-targets-empty">No rules — every caller gets the value above.</p>
+
+        <ol :if={@targets != []} class="pf-targets-list">
+          <li :for={target <- @targets} class="pf-target">
+            <span class="pf-target-rule">
+              <span :for={{condition, index} <- Enum.with_index(target.conditions)} class="pf-target-cond">
+                <span :if={index > 0} class="pf-target-and">and</span>
+                <code>{condition.attribute}</code>
+                <span class="pf-target-op">{operator_label(condition.operator)}</span>
+                <code>{Enum.join(condition.values, ", ")}</code>
+              </span>
+              <span class="pf-target-arrow">&rarr;</span>
+              <code class="pf-target-value">{target.value}</code>
+            </span>
+            <button
+              type="button"
+              class="pf-target-delete"
+              phx-click="pf-delete-target"
+              phx-value-target-id={target.id}
+              aria-label={"Delete rule for #{@entry.key}"}
+            >
+              Delete
+            </button>
+          </li>
+        </ol>
+
+        <form
+          id={"pf-target-form-#{@entry.key}"}
+          class="pf-target-add"
+          phx-submit="pf-add-target"
+          phx-value-key={@entry.key}
+        >
+          <input
+            type="text"
+            name="target[attribute]"
+            placeholder="attribute (e.g. company_id)"
+            class="pf-input pf-target-input"
+            aria-label="Attribute"
+          />
+          <select name="target[operator]" class="pf-select pf-target-op-select" aria-label="Operator">
+            <option :for={operator <- PhoenixFlags.Target.operators()} value={operator}>
+              {operator_label(to_string(operator))}
+            </option>
+          </select>
+          <input
+            type="text"
+            name="target[values]"
+            placeholder="values, comma separated"
+            class="pf-input pf-target-input"
+            aria-label="Values"
+          />
+          <.target_value_input entry={@entry} variants={@variants} select_options={@select_options} />
+          <button type="submit" class="pf-btn">Add rule</button>
+        </form>
+
+        <p :if={@target_error} class="pf-field-error">{@target_error}</p>
+      </section>
+      """
+    end
+
+    # The forced value is constrained the same way the flag's own value is, so a
+    # boolean offers true/false and a variant offers its declared arms.
+    defp target_value_input(%{entry: %{type: "boolean"}} = assigns) do
+      ~H"""
+      <select name="target[value]" class="pf-select pf-target-input" aria-label="Forced value">
+        <option value="true">true</option>
+        <option value="false">false</option>
+      </select>
+      """
+    end
+
+    defp target_value_input(%{entry: %{type: "variant"}} = assigns) do
+      ~H"""
+      <select name="target[value]" class="pf-select pf-target-input" aria-label="Forced variant">
+        <option :for={{label, value, _weight} <- @variants} value={value}>{label}</option>
+      </select>
+      """
+    end
+
+    defp target_value_input(%{entry: %{type: "select"}} = assigns) do
+      ~H"""
+      <select name="target[value]" class="pf-select pf-target-input" aria-label="Forced value">
+        <option :for={{label, value} <- @select_options} value={value}>{label}</option>
+      </select>
+      """
+    end
+
+    defp target_value_input(assigns) do
+      ~H"""
+      <input
+        type="text"
+        name="target[value]"
+        placeholder="forced value"
+        class="pf-input pf-target-input"
+        aria-label="Forced value"
+      />
+      """
+    end
+
+    defp operator_label("in"), do: "is one of"
+    defp operator_label("not_in"), do: "is not one of"
+    defp operator_label("eq"), do: "equals"
+    defp operator_label("starts_with"), do: "starts with"
+    defp operator_label(other), do: other
 
     defp modal_body_id(key), do: "pf-modal-body-#{key}"
 

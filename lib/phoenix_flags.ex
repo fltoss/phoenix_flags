@@ -118,6 +118,68 @@ defmodule PhoenixFlags do
     end
   end
 
+  @doc """
+  Sets the targeting context for the current process.
+
+  Shorthand for `PhoenixFlags.Context.put/1`. Call it once where you already
+  have the current user — a plug, or a LiveView `on_mount` hook — and every read
+  in that process can be targeted without threading a context through:
+
+      PhoenixFlags.put_context(user_id: user.id, company_id: user.company_id)
+
+  Not inherited by spawned processes; see `PhoenixFlags.Context`.
+  """
+  defdelegate put_context(attributes), to: PhoenixFlags.Context, as: :put
+
+  @doc """
+  Merges attributes into the current process's targeting context.
+  """
+  defdelegate merge_context(attributes), to: PhoenixFlags.Context, as: :merge
+
+  @doc """
+  Returns the current process's targeting context.
+  """
+  defdelegate context(), to: PhoenixFlags.Context, as: :get
+
+  @doc """
+  Clears the current process's targeting context.
+  """
+  defdelegate clear_context(), to: PhoenixFlags.Context, as: :clear
+
+  # Split out of __using__/1's quote block, which is long enough already.
+  @doc false
+  def __target_api__ do
+    quote do
+      @doc """
+      Returns the targeting rules for a flag, in evaluation order.
+      """
+      def targets(key) do
+        PhoenixFlags.Server.targets(__MODULE__, key)
+      end
+
+      @doc """
+      Adds a targeting rule, forcing a value when the request context matches.
+
+          put_target("enable_benefits",
+            conditions: [[attribute: :company_id, operator: :in, values: [123]]],
+            value: "true"
+          )
+
+      See `PhoenixFlags.Target`.
+      """
+      def put_target(key, attrs) do
+        PhoenixFlags.Server.put_target(__MODULE__, key, attrs)
+      end
+
+      @doc """
+      Deletes a targeting rule by id.
+      """
+      def delete_target(target_id) do
+        PhoenixFlags.Server.delete_target(__MODULE__, target_id)
+      end
+    end
+  end
+
   @doc false
   defmacro __using__(opts) do
     test_module = Module.concat([__CALLER__.module, Test])
@@ -154,12 +216,18 @@ defmodule PhoenixFlags do
       @doc """
       Returns the cached value for a config key, cast to its native type.
 
+      A targeting rule that matches the request context wins over the stored
+      value — see `PhoenixFlags.Target`. Pass `context: %{...}` to override the
+      process-scoped `PhoenixFlags.Context`.
+
       Raises for a `:variant` flag, which holds a split rather than a single
       value — use `variant/3` for those.
       """
-      def get(key, default \\ nil) do
-        PhoenixFlags.Server.get(__MODULE__, key, default)
+      def get(key, default \\ nil, opts \\ []) do
+        PhoenixFlags.Server.get(__MODULE__, key, default, opts)
       end
+
+      unquote(PhoenixFlags.__target_api__())
 
       @doc """
       Returns the variant assigned to `identity` for a `:variant` flag.

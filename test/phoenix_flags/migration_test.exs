@@ -11,6 +11,7 @@ defmodule PhoenixFlags.MigrationTest do
   @initial_migration 99_999_999_999_997
   @v2_migration 99_999_999_999_998
   @upgrade_migration 99_999_999_999_999
+  @v4_migration 100_000_000_000_000
 
   # The migration an app generated on install: up() migrates to the latest
   # version the installed package knows about.
@@ -42,6 +43,13 @@ defmodule PhoenixFlags.MigrationTest do
     def down, do: PhoenixFlags.Migration.down(version: 3, prefix: "pf_migration_test")
   end
 
+  defmodule UpgradeToV4 do
+    use Ecto.Migration
+
+    def up, do: PhoenixFlags.Migration.up(version: 4, prefix: "pf_migration_test")
+    def down, do: PhoenixFlags.Migration.down(version: 4, prefix: "pf_migration_test")
+  end
+
   setup do
     start_supervised!(
       {TestRepo, name: @migration_repo, pool: DBConnection.ConnectionPool, pool_size: 2}
@@ -59,14 +67,24 @@ defmodule PhoenixFlags.MigrationTest do
   test "migrates up, rolls back partially and fully, and tracks the version" do
     TestRepo.query!("CREATE SCHEMA #{@prefix}")
 
-    migrations = [{@initial_migration, InitialToV2}, {@upgrade_migration, UpgradeToV3}]
+    migrations = [
+      {@initial_migration, InitialToV2},
+      {@upgrade_migration, UpgradeToV3},
+      {@v4_migration, UpgradeToV4}
+    ]
+
     migrator_opts = [log: false, dynamic_repo: @migration_repo]
 
     # Fresh install: up to the current version
-    assert [_, _] = Ecto.Migrator.run(TestRepo, migrations, :up, [all: true] ++ migrator_opts)
+    assert [_, _, _] = Ecto.Migrator.run(TestRepo, migrations, :up, [all: true] ++ migrator_opts)
 
     assert table_exists?("system_flags")
     assert table_exists?("system_flags_audit")
+    assert table_exists?("system_flag_targets")
+    assert table_exists?("system_flag_target_conditions")
+
+    # V04 stores condition values in a native array, so nothing is serialised
+    assert column_type("system_flag_target_conditions", "values") == "ARRAY"
 
     # V03 widened the value columns to text
     assert column_type("system_flags", "value") == "text"
@@ -77,6 +95,14 @@ defmodule PhoenixFlags.MigrationTest do
     assert meta_version() == PhoenixFlags.Migration.current_version()
     assert comment_version() == nil
 
+    # Partial rollback to V3: the targeting tables go, the rest stays
+    assert [_] = Ecto.Migrator.run(TestRepo, migrations, :down, [step: 1] ++ migrator_opts)
+
+    refute table_exists?("system_flag_targets")
+    refute table_exists?("system_flag_target_conditions")
+    assert table_exists?("system_flags")
+    assert meta_version() == 3
+
     # Partial rollback to V2: meta table dropped, version back in the comment
     assert [_] = Ecto.Migrator.run(TestRepo, migrations, :down, [step: 1] ++ migrator_opts)
 
@@ -85,18 +111,21 @@ defmodule PhoenixFlags.MigrationTest do
     assert column_type("system_flags", "value") == "character varying"
 
     # Upgrading again picks the version up from the comment
-    assert [_] = Ecto.Migrator.run(TestRepo, migrations, :up, [all: true] ++ migrator_opts)
+    assert [_, _] = Ecto.Migrator.run(TestRepo, migrations, :up, [all: true] ++ migrator_opts)
 
-    assert meta_version() == 3
+    assert meta_version() == 4
     assert comment_version() == nil
+    assert table_exists?("system_flag_targets")
 
     # Full rollback used to fail with invalid SQL (COMMENT ON TABLE IF EXISTS)
-    assert [_, _] =
+    assert [_, _, _] =
              Ecto.Migrator.run(TestRepo, migrations, :down, [all: true] ++ migrator_opts)
 
     refute table_exists?("system_flags")
     refute table_exists?("system_flags_audit")
     refute table_exists?("system_flags_meta")
+    refute table_exists?("system_flag_targets")
+    refute table_exists?("system_flag_target_conditions")
 
     reset_migration_state()
   end
@@ -111,27 +140,30 @@ defmodule PhoenixFlags.MigrationTest do
     migrations = [
       {@initial_migration, InitialMigration},
       {@v2_migration, UpgradeToV2},
-      {@upgrade_migration, UpgradeToV3}
+      {@upgrade_migration, UpgradeToV3},
+      {@v4_migration, UpgradeToV4}
     ]
 
     migrator_opts = [log: false, dynamic_repo: @migration_repo]
 
-    assert [_, _, _] =
+    assert [_, _, _, _] =
              Ecto.Migrator.run(TestRepo, migrations, :up, [all: true] ++ migrator_opts)
 
     assert table_exists?("system_flags")
     assert table_exists?("system_flags_audit")
+    assert table_exists?("system_flag_targets")
     assert meta_version() == PhoenixFlags.Migration.current_version()
     assert column_type("system_flags", "value") == "text"
 
-    # And the whole chain rolls back cleanly: V3 → comment "2" → comment "1"
-    # → everything dropped.
-    assert [_, _, _] =
+    # And the whole chain rolls back cleanly: V4 → V3 → comment "2" →
+    # comment "1" → everything dropped.
+    assert [_, _, _, _] =
              Ecto.Migrator.run(TestRepo, migrations, :down, [all: true] ++ migrator_opts)
 
     refute table_exists?("system_flags")
     refute table_exists?("system_flags_audit")
     refute table_exists?("system_flags_meta")
+    refute table_exists?("system_flag_targets")
 
     reset_migration_state()
   end

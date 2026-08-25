@@ -14,6 +14,7 @@
 #   flags/0            → 0 DB calls (compiled module attribute)
 #   select_options/1   → 0 DB calls (compiled module attribute)
 #   variant/3          → 0 DB calls (persistent_term + SHA-256 + bucket walk)
+#   get/3 w/ targeting → 0 DB calls (one extra persistent_term read + rule walk)
 #   update_entry/3     → 2 DB calls (SELECT by key + UPDATE), cache patched in-memory
 #                        + N network sends (Node.list peer notification, fire-and-forget)
 
@@ -161,6 +162,42 @@ Benchee.run(
   memory_time: 1,
   print: [configuration: false]
 )
+
+IO.puts("\n--- 4c. targeting [0 DB calls, one extra persistent_term read + rule walk] ---\n")
+
+{:ok, _} =
+  BenchConfig.put_target("bench_bool",
+    conditions: [[attribute: :company_id, operator: :in, values: [123]]],
+    value: "false"
+  )
+
+# Context is set once per scenario, so only the read is timed. Comparing separate
+# Benchee runs at this timescale is not reliable -- everything that needs
+# comparing has to sit in one run.
+set_context = fn attrs ->
+  fn _input ->
+    if attrs == [], do: PhoenixFlags.clear_context(), else: PhoenixFlags.put_context(attrs)
+  end
+end
+
+Benchee.run(
+  %{
+    "get/2 no context, flag has no rules" =>
+      {fn _ -> BenchConfig.get("bench_str") end, before_scenario: set_context.([])},
+    "get/2 context set, flag has no rules" =>
+      {fn _ -> BenchConfig.get("bench_str") end, before_scenario: set_context.(company_id: 999)},
+    "get/2 context set, rule misses" =>
+      {fn _ -> BenchConfig.get("bench_bool") end, before_scenario: set_context.(company_id: 999)},
+    "get/2 context set, rule matches" =>
+      {fn _ -> BenchConfig.get("bench_bool") end, before_scenario: set_context.(company_id: 123)}
+  },
+  time: 3,
+  warmup: 1,
+  memory_time: 1,
+  print: [configuration: false]
+)
+
+PhoenixFlags.clear_context()
 
 IO.puts("""
 \n--- 5. update_entry/3 [2 DB calls: SELECT + UPDATE, cache patched in-memory] ---

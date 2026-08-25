@@ -19,6 +19,10 @@ if Code.ensure_loaded?(Igniter) do
       from `varchar(255)` to `text` (encrypted secrets easily exceed 255
       characters) and moving the schema version into the new
       `system_flags_meta` table.
+    - `0.9.0` — generates a migration that calls
+      `PhoenixFlags.Migration.up(version: 4)`, adding the
+      `system_flag_targets` and `system_flag_target_conditions` tables used by
+      targeting rules.
     """
     use Igniter.Mix.Task
 
@@ -44,7 +48,8 @@ if Code.ensure_loaded?(Igniter) do
 
       upgrades = %{
         "0.5.0" => [&upgrade_to_v2_migration/2],
-        "0.6.0" => [&upgrade_to_v3_migration/2]
+        "0.6.0" => [&upgrade_to_v3_migration/2],
+        "0.9.0" => [&upgrade_to_v4_migration/2]
       }
 
       Igniter.Upgrades.run(igniter, from, to, upgrades, options)
@@ -75,6 +80,39 @@ if Code.ensure_loaded?(Igniter) do
           phoenix_flags 0.5.0 adds the `system_flags_audit` table (for the audit log)
           and enables the `:secret` flag type. A migration was generated — run
           `mix ecto.migrate` to apply it.
+          """)
+      end
+    end
+
+    defp upgrade_to_v4_migration(igniter, _opts) do
+      {igniter, repos} = Igniter.Libs.Ecto.list_repos(igniter)
+
+      case List.first(repos) do
+        nil ->
+          Igniter.add_warning(
+            igniter,
+            "phoenix_flags: no Ecto repo found; skipping the v4 migration generator. " <>
+              "Generate it manually with `mix ecto.gen.migration upgrade_system_flags_v4` " <>
+              "and have it call `PhoenixFlags.Migration.up(version: 4)`."
+          )
+
+        repo ->
+          igniter
+          |> Igniter.Libs.Ecto.gen_migration(repo, "upgrade_system_flags_v4",
+            body: """
+              def up, do: PhoenixFlags.Migration.up(version: 4)
+              def down, do: PhoenixFlags.Migration.down(version: 4)
+            """,
+            on_exists: :skip
+          )
+          |> Igniter.add_notice("""
+          phoenix_flags 0.9.0 adds targeting rules: force a flag's value for a
+          specific user, company, or any attribute you pass in the request
+          context. Two new tables back it — system_flag_targets and
+          system_flag_target_conditions.
+
+          A migration was generated — run `mix ecto.migrate` to apply it.
+          Existing flags are unaffected until you add a rule.
           """)
       end
     end

@@ -30,19 +30,33 @@ defmodule PhoenixFlags.Server do
   @doc """
   Returns the cached value for a config key.
 
+  Targeting rules are consulted first: if one matches the request context, its
+  value wins over the stored value. See `PhoenixFlags.Target`.
+
   When `cache_enabled: false`, checks the process dictionary first
-  (for test overrides), then falls back to a direct DB read.
+  (for test overrides), then targeting rules, then falls back to a direct DB read.
+
+  ## Options
+
+    * `:context` — attributes for targeting rules, overriding the process-scoped
+      `PhoenixFlags.Context`. Given neither, targeting is skipped entirely.
 
   Raises for a `:variant` flag: it holds a split rather than a single value, and
   returning the struct would leak it into application code. Use `variant/4`.
   """
-  def get(instance, key, default \\ nil) do
+  def get(instance, key, default \\ nil, opts \\ []) do
     case safe_get_config(instance) do
       {:ok, %{cache_enabled: true}} ->
-        instance |> read_cached_values() |> Map.get(key, default) |> reject_variant(key)
+        case resolve_target(instance, key, opts) do
+          {:ok, value} ->
+            value
+
+          :none ->
+            instance |> read_cached_values() |> Map.get(key, default) |> reject_variant(key)
+        end
 
       {:ok, config} ->
-        config |> get_uncached(instance, key, default) |> reject_variant(key)
+        config |> get_uncached(instance, key, default, opts) |> reject_variant(key)
 
       :error ->
         default
@@ -61,11 +75,234 @@ defmodule PhoenixFlags.Server do
 
   defp reject_variant(value, _key), do: value
 
-  defp get_uncached(config, instance, key, default) do
+  defp get_uncached(config, instance, key, default, opts) do
     case PhoenixFlags.Testing.get_stub(instance, key) do
-      {:ok, value} -> value
-      :none -> fallback_read(config, key, default)
+      {:ok, value} ->
+        value
+
+      :none ->
+        case resolve_target(instance, key, opts) do
+          {:ok, value} -> value
+          :none -> fallback_read(config, key, default)
+        end
     end
+  end
+
+  @doc """
+  Returns the targeting rules for a flag, in evaluation order.
+  """
+  def targets(instance, key) do
+    case safe_get_config(instance) do
+      {:ok, config} -> load_targets_for(config, key)
+      :error -> []
+    end
+  end
+
+  @doc """
+  Adds a targeting rule to a flag.
+
+  `attrs` takes `:value` and `:conditions`, and optionally `:position`:
+
+      put_target(MyApp.SystemConfig, "enable_benefits",
+        conditions: [[attribute: :company_id, operator: :in, values: [123]]],
+        value: "true"
+      )
+
+  The value must be valid for the flag's type, checked with the same rules a
+  dashboard save goes through. `:secret` flags cannot be targeted — a rule value
+  would sit in the targets table as plaintext, defeating the encryptor.
+  """
+  def put_target(instance, key, attrs) do
+    config = get_config(instance)
+
+    attrs =
+      attrs
+      |> Map.new()
+      |> normalise_conditions()
+      |> Map.put(:key, key)
+      |> Map.put_new(:position, next_target_position(config, key))
+
+    case fetch_entry(config, key) do
+      {:error, :not_found} ->
+        {:error, :not_found}
+
+      {:ok, entry} ->
+        changeset =
+          %PhoenixFlags.Target{}
+          |> PhoenixFlags.Target.changeset(attrs)
+          |> validate_target_value(config, entry)
+
+        if changeset.valid? do
+          insert_target(config, changeset)
+        else
+          {:error, changeset}
+        end
+    end
+  end
+
+  defp insert_target(%Config{} = config, changeset) do
+    case config.repo.insert(changeset) do
+      {:ok, target} ->
+        refresh_targets(config)
+        {:ok, config.repo.preload(target, :conditions)}
+
+      {:error, changeset} ->
+        {:error, changeset}
+    end
+  end
+
+  @doc """
+  Deletes a targeting rule by id. Its conditions go with it.
+  """
+  def delete_target(instance, target_id) do
+    config = get_config(instance)
+
+    case config.repo.get(PhoenixFlags.Target, target_id) do
+      nil ->
+        {:error, :not_found}
+
+      target ->
+        case config.repo.delete(target) do
+          {:ok, deleted} ->
+            refresh_targets(config)
+            {:ok, deleted}
+
+          {:error, changeset} ->
+            {:error, changeset}
+        end
+    end
+  rescue
+    error ->
+      Logger.warning(
+        "PhoenixFlags: failed to delete target #{inspect(target_id)}: #{inspect(error)}"
+      )
+
+      {:error, :not_found}
+  end
+
+  # The documented API takes conditions as keyword lists, which reads better in
+  # Elixir than a list of maps; cast_assoc/3 needs maps.
+  defp normalise_conditions(%{conditions: conditions} = attrs) when is_list(conditions) do
+    %{attrs | conditions: Enum.map(conditions, &condition_map/1)}
+  end
+
+  defp normalise_conditions(%{"conditions" => conditions} = attrs) when is_list(conditions) do
+    %{attrs | "conditions" => Enum.map(conditions, &condition_map/1)}
+  end
+
+  defp normalise_conditions(attrs), do: attrs
+
+  defp condition_map(condition) when is_list(condition), do: Map.new(condition)
+  defp condition_map(condition), do: condition
+
+  # Ordered so the overwhelmingly common case is the cheapest: a flag with no
+  # rules costs one `:persistent_term` read plus a map lookup and never touches
+  # the process dictionary at all. Measured, that beats checking the context
+  # first -- `Process.get/1` costs more than the read it would have avoided.
+  #
+  # The context is only fetched once we know there is a rule that could match,
+  # and an empty one short-circuits there: every rule needs at least one
+  # condition, and a missing attribute never matches.
+  defp resolve_target(instance, key, opts) do
+    case instance |> read_cached_targets() |> Map.get(key) do
+      {type, targets} -> resolve_with_context(targets, target_context(opts), type)
+      _absent -> :none
+    end
+  rescue
+    error ->
+      Logger.warning(
+        "PhoenixFlags: targeting failed for #{inspect(key)}: #{Exception.message(error)}"
+      )
+
+      :none
+  end
+
+  defp resolve_with_context(_targets, context, _type) when map_size(context) == 0, do: :none
+  defp resolve_with_context(targets, context, type), do: resolve_and_cast(targets, context, type)
+
+  defp resolve_and_cast(targets, context, type) do
+    case PhoenixFlags.Target.resolve(targets, context) do
+      # A :variant rule names a variant, which `variant/4` returns as-is; casting
+      # it as a split would fail. Everything else casts like a stored value.
+      {:ok, value} when type == "variant" -> {:ok, value}
+      {:ok, value} -> {:ok, Entry.cast_value(value, type)}
+      :none -> :none
+    end
+  end
+
+  defp target_context(opts) do
+    case safe_opt(opts, :context, nil) do
+      context when is_map(context) -> context
+      context when is_list(context) -> Map.new(context)
+      _absent -> PhoenixFlags.Context.get()
+    end
+  end
+
+  defp fetch_entry(%Config{} = config, key) when is_binary(key) do
+    case config.repo.get_by(Entry, key: key) do
+      %Entry{} = entry -> {:ok, entry}
+      nil -> {:error, :not_found}
+    end
+  end
+
+  defp fetch_entry(_config, _key), do: {:error, :not_found}
+
+  defp validate_target_value(changeset, _config, %Entry{type: "secret"}) do
+    Ecto.Changeset.add_error(
+      changeset,
+      :value,
+      "a :secret flag cannot be targeted: the rule value would be stored as plaintext, " <>
+        "defeating the encryptor"
+    )
+  end
+
+  # A :variant rule names one arm of the split, so it is checked against the
+  # declared variant names -- not parsed as a weights string, which is what a
+  # normal save of a :variant value would be.
+  defp validate_target_value(changeset, %Config{} = config, %Entry{type: "variant", key: key}) do
+    names = variant_names(config, key)
+    value = Ecto.Changeset.get_field(changeset, :value)
+
+    if names == [] or (is_binary(value) and value in names) do
+      changeset
+    else
+      Ecto.Changeset.add_error(
+        changeset,
+        :value,
+        "must name one of the declared variants: #{Enum.join(names, ", ")}"
+      )
+    end
+  end
+
+  # Every other type reuses the changeset a dashboard save goes through, so a
+  # rule value cannot be something a normal save would reject.
+  defp validate_target_value(changeset, %Config{} = config, %Entry{} = entry) do
+    value = Ecto.Changeset.get_field(changeset, :value)
+
+    case value_changeset(config, entry, %{"value" => value}) do
+      %{valid?: true} ->
+        changeset
+
+      invalid ->
+        invalid.errors
+        |> Enum.filter(&match?({:value, _}, &1))
+        |> Enum.reduce(changeset, fn {:value, {message, opts}}, acc ->
+          Ecto.Changeset.add_error(acc, :value, message, opts)
+        end)
+    end
+  end
+
+  defp next_target_position(%Config{} = config, key) do
+    import Ecto.Query
+
+    config.repo.one(
+      from(t in PhoenixFlags.Target, where: t.key == ^key, select: coalesce(max(t.position), -1))
+    ) + 1
+  end
+
+  defp refresh_targets(%Config{} = config) do
+    store_targets(config)
+    notify_peers(config)
   end
 
   # `:persistent_term.get/2` returns the default for a missing key rather than
@@ -89,6 +326,8 @@ defmodule PhoenixFlags.Server do
       with `%{flag: key, identity: identity, variant: variant, instance: instance}`
       as metadata, so exposures can be piped into your own analytics. Off by
       default to keep the read path free.
+    * `:context` — attributes for targeting rules, overriding the process-scoped
+      context. A matching rule pins the caller to its variant, ahead of the split.
     * `:now` — current time in milliseconds, for testing TTL rollover.
   """
   def variant(instance, key, identity, opts \\ []) do
@@ -119,19 +358,47 @@ defmodule PhoenixFlags.Server do
   defp resolve_variant(instance, key, identity, opts) do
     case safe_get_config(instance) do
       {:ok, %{cache_enabled: true}} ->
-        instance |> read_cached_values() |> Map.get(key) |> assign_variant(key, identity, opts)
+        targeted_or(instance, key, opts, fn ->
+          assign_from_cache(instance, key, identity, opts)
+        end)
 
       {:ok, config} ->
-        # Mirrors get/3: a stub wins over the database in uncached (test) mode,
-        # and it names a variant directly rather than a split to assign from.
-        case PhoenixFlags.Testing.get_stub(instance, key) do
-          {:ok, stubbed} -> stubbed
-          :none -> config |> variant_from_db(key) |> assign_variant(key, identity, opts)
-        end
+        resolve_variant_uncached(config, instance, key, identity, opts)
 
       :error ->
         nil
     end
+  end
+
+  # Mirrors get/3: a stub wins over everything in uncached (test) mode, and it
+  # names a variant directly rather than a split to assign from.
+  defp resolve_variant_uncached(config, instance, key, identity, opts) do
+    case PhoenixFlags.Testing.get_stub(instance, key) do
+      {:ok, stubbed} ->
+        stubbed
+
+      :none ->
+        targeted_or(instance, key, opts, fn ->
+          assign_from_db(config, key, identity, opts)
+        end)
+    end
+  end
+
+  # A targeting rule pins the caller to a named arm, overriding the split:
+  # "force this for them" would mean little otherwise.
+  defp targeted_or(instance, key, opts, otherwise) do
+    case resolve_target(instance, key, opts) do
+      {:ok, targeted} -> targeted
+      :none -> otherwise.()
+    end
+  end
+
+  defp assign_from_cache(instance, key, identity, opts) do
+    instance |> read_cached_values() |> Map.get(key) |> assign_variant(key, identity, opts)
+  end
+
+  defp assign_from_db(config, key, identity, opts) do
+    config |> variant_from_db(key) |> assign_variant(key, identity, opts)
   end
 
   defp assign_variant(%PhoenixFlags.Variant{} = variant, key, identity, opts) do
@@ -454,7 +721,7 @@ defmodule PhoenixFlags.Server do
 
   @impl true
   def terminate(_reason, %Config{} = config) do
-    # Leave the cache, config, and order keys intact so that get/3 and
+    # Leave the cache, config, order, and targets keys intact so that get/3 and
     # all_grouped/0 can keep serving (possibly stale) values during a
     # restart. init/1 overwrites them with fresh data. Only the repo
     # claim is released — it guards concurrently *running* instances.
@@ -669,6 +936,75 @@ defmodule PhoenixFlags.Server do
       Map.new(entries, fn entry -> {entry.key, decrypted_cast_value(entry, config)} end)
 
     :persistent_term.put(cache_key(config.name), {values, entries})
+
+    store_targets(config, entries)
+  end
+
+  # Targets live under their own key rather than widening the {values, entries}
+  # tuple, which read_cached_values/1 and read_cached_entries/1 both index into
+  # by position. Same shape as the :order key.
+  #
+  # Each key maps to {type, targets}: the type is needed to cast a matching
+  # rule's value, and looking it up here means a read does not have to scan the
+  # entry list for it.
+  defp store_targets(%Config{} = config, entries \\ nil) do
+    entries = entries || config.repo.all(Entry)
+    types = Map.new(entries, fn entry -> {entry.key, entry.type} end)
+
+    targets =
+      config
+      |> all_targets()
+      |> Enum.group_by(& &1.key)
+      |> Enum.reduce(%{}, fn {key, targets}, acc ->
+        case Map.fetch(types, key) do
+          # Rules for a flag that no longer exists are simply not loaded; the
+          # declaration is the source of truth for which flags exist.
+          {:ok, type} -> Map.put(acc, key, {type, Enum.sort_by(targets, & &1.position)})
+          :error -> acc
+        end
+      end)
+
+    :persistent_term.put(targets_key(config.name), targets)
+  rescue
+    error ->
+      Logger.warning("PhoenixFlags: failed to load targeting rules: #{inspect(error)}")
+      :ok
+  end
+
+  defp all_targets(%Config{} = config) do
+    import Ecto.Query
+
+    config.repo.all(
+      from(t in PhoenixFlags.Target,
+        order_by: [asc: t.key, asc: t.position],
+        preload: :conditions
+      )
+    )
+  end
+
+  defp load_targets_for(%Config{} = config, key) when is_binary(key) do
+    import Ecto.Query
+
+    config.repo.all(
+      from(t in PhoenixFlags.Target,
+        where: t.key == ^key,
+        order_by: [asc: t.position],
+        preload: :conditions
+      )
+    )
+  rescue
+    error ->
+      Logger.warning(
+        "PhoenixFlags: failed to read targeting rules for #{inspect(key)}: #{inspect(error)}"
+      )
+
+      []
+  end
+
+  defp load_targets_for(_config, _key), do: []
+
+  defp read_cached_targets(instance) do
+    read_persistent_term(targets_key(instance), %{})
   end
 
   defp patch_cache(%Config{} = config, %Entry{} = updated) do
@@ -880,6 +1216,7 @@ defmodule PhoenixFlags.Server do
   defp cache_key(instance), do: {PhoenixFlags, instance, :cache}
   defp config_key(instance), do: {PhoenixFlags, instance, :config}
   defp order_key(instance), do: {PhoenixFlags, instance, :order}
+  defp targets_key(instance), do: {PhoenixFlags, instance, :targets}
   defp repo_claim_key(repo), do: {PhoenixFlags, :repo_claim, repo}
 
   defp get_config(instance) do

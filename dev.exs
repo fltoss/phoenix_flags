@@ -244,6 +244,16 @@ Ecto.Migrator.run(PhoenixFlags.DevRepo, "priv/test_repo/migrations", :up, all: t
 %{start: {mod, fun, args}} = PhoenixFlags.DevConfig.child_spec()
 {:ok, _} = apply(mod, fun, args)
 
+# A sample targeting rule, so the dialog has something to show. Must come after
+# the server starts -- put_target/2 needs the running instance's config.
+# See it apply with: PhoenixFlags.put_context(company_id: 123)
+if PhoenixFlags.DevConfig.targets("enable_benefits") == [] do
+  PhoenixFlags.DevConfig.put_target("enable_benefits",
+    conditions: [[attribute: :company_id, operator: :in, values: [123, 456]]],
+    value: "true"
+  )
+end
+
 # Start the endpoint
 {:ok, _} = PhoenixFlags.DevEndpoint.start_link()
 

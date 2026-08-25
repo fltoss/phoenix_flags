@@ -26,12 +26,18 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
        |> assign(:actor, actor)
        |> assign(:grouped_configs, grouped)
        |> assign(:forms, build_forms(grouped))
-       |> assign(:editing_key, nil)}
+       |> assign(:editing_key, nil)
+       |> assign(:targets, [])
+       |> assign(:target_error, nil)}
     end
 
     @impl true
     def handle_event("pf-edit", %{"key" => key}, socket) do
-      {:noreply, assign(socket, :editing_key, key)}
+      {:noreply,
+       socket
+       |> assign(:editing_key, key)
+       |> assign(:target_error, nil)
+       |> load_targets(key)}
     end
 
     @impl true
@@ -39,7 +45,43 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
       {:noreply,
        socket
        |> assign(:forms, build_forms(socket.assigns.grouped_configs))
-       |> assign(:editing_key, nil)}
+       |> assign(:editing_key, nil)
+       |> assign(:target_error, nil)
+       |> assign(:targets, [])}
+    end
+
+    @impl true
+    def handle_event("pf-add-target", %{"key" => key, "target" => params}, socket) do
+      config = socket.assigns.config_module
+
+      case config.put_target(key, target_attrs(params)) do
+        {:ok, _target} ->
+          {:noreply,
+           socket
+           |> assign(:target_error, nil)
+           |> load_targets(key)
+           |> reload()}
+
+        {:error, %Ecto.Changeset{} = changeset} ->
+          {:noreply, assign(socket, :target_error, target_error_message(changeset))}
+
+        {:error, reason} ->
+          {:noreply, assign(socket, :target_error, "could not add rule: #{inspect(reason)}")}
+      end
+    end
+
+    @impl true
+    def handle_event("pf-delete-target", %{"target-id" => target_id}, socket) do
+      config = socket.assigns.config_module
+      key = socket.assigns.editing_key
+
+      case config.delete_target(target_id) do
+        {:ok, _deleted} ->
+          {:noreply, socket |> assign(:target_error, nil) |> load_targets(key) |> reload()}
+
+        {:error, _reason} ->
+          {:noreply, assign(socket, :target_error, "that rule no longer exists")}
+      end
     end
 
     @impl true
@@ -157,9 +199,80 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
         form={@forms[@editing_key]}
         select_options={@config_module.select_options(@editing_key)}
         variants={@config_module.variants(@editing_key)}
+        targets={@targets}
+        target_error={@target_error}
       />
       """
     end
+
+    defp load_targets(socket, key) when is_binary(key) do
+      assign(socket, :targets, socket.assigns.config_module.targets(key))
+    end
+
+    defp load_targets(socket, _key), do: assign(socket, :targets, [])
+
+    # The add-rule form posts one condition, comma separated values. Rules with
+    # several conditions are created through put_target/2 and render here fine.
+    defp target_attrs(params) when is_map(params) do
+      values =
+        params
+        |> param_string("values")
+        |> String.split(",")
+        |> Enum.map(&String.trim/1)
+        |> Enum.reject(&(&1 == ""))
+
+      [
+        value: param_string(params, "value"),
+        conditions: [
+          [
+            attribute: params |> param_string("attribute") |> String.trim(),
+            operator: param_string(params, "operator", "in"),
+            values: values
+          ]
+        ]
+      ]
+    end
+
+    defp target_attrs(_params), do: [value: "", conditions: []]
+
+    # Params are client-controlled, so a forged payload can put a map or list
+    # where a string belongs -- and to_string/1 raises on those, taking the
+    # LiveView down. Anything that is not already a string becomes the fallback,
+    # which then fails validation as an ordinary error.
+    defp param_string(params, field, fallback \\ "") do
+      case Map.get(params, field) do
+        value when is_binary(value) -> value
+        _other -> fallback
+      end
+    end
+
+    # Errors can land on the rule or on a nested condition; surface whichever
+    # the operator actually needs to see rather than a bare "is invalid".
+    defp target_error_message(changeset) do
+      changeset
+      |> Ecto.Changeset.traverse_errors(fn {message, _opts} -> message end)
+      |> flatten_errors()
+      |> case do
+        [] -> "could not add rule"
+        messages -> Enum.join(messages, "; ")
+      end
+    end
+
+    defp flatten_errors(errors) when is_map(errors) do
+      Enum.flat_map(errors, fn {field, value} ->
+        Enum.map(flatten_errors(value), &"#{field} #{&1}")
+      end)
+    end
+
+    defp flatten_errors(errors) when is_list(errors) do
+      Enum.flat_map(errors, fn
+        error when is_binary(error) -> [error]
+        error -> flatten_errors(error)
+      end)
+    end
+
+    defp flatten_errors(error) when is_binary(error), do: [error]
+    defp flatten_errors(_error), do: []
 
     # Derived from grouped_configs rather than held in its own assign, so a
     # reload cannot leave the dialog showing a stale entry.

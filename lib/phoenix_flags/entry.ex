@@ -94,7 +94,12 @@ defmodule PhoenixFlags.Entry do
   defp validate_variant_names(changeset, declared) do
     value = get_field(changeset, :value)
 
-    if get_field(changeset, :type) == "variant" and is_binary(value) do
+    # `Type.validate_value/2` has already parsed the value; if that failed it has
+    # reported the reason, and parsing again here would add the identical message
+    # a second time for the dashboard to render twice.
+    already_invalid? = Keyword.has_key?(changeset.errors, :value)
+
+    if not already_invalid? and get_field(changeset, :type) == "variant" and is_binary(value) do
       case PhoenixFlags.Variant.parse(value, names: declared) do
         {:ok, _variant} -> changeset
         {:error, message} -> add_error(changeset, :value, message)

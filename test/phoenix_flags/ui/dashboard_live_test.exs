@@ -212,7 +212,7 @@ defmodule PhoenixFlags.UI.DashboardLiveTest do
       # Submit new value
       html =
         view
-        |> form(~s(form[phx-value-key="updatable"]), entry: %{value: "10"})
+        |> form("#pf-form-updatable", entry: %{value: "10"})
         |> render_submit()
 
       assert html =~ "10"
@@ -239,7 +239,7 @@ defmodule PhoenixFlags.UI.DashboardLiveTest do
 
       html =
         view
-        |> form(~s(form[phx-value-key="validated"]), entry: %{value: "150"})
+        |> form("#pf-form-validated", entry: %{value: "150"})
         |> render_submit()
 
       assert html =~ "must be between 0 and 100"
@@ -348,7 +348,7 @@ defmodule PhoenixFlags.UI.DashboardLiveTest do
       |> render_click()
 
       view
-      |> element(~s(form[phx-value-key="email_provider"]))
+      |> element("#pf-form-email_provider")
       |> render_submit(%{"entry" => %{"value" => "ses"}})
 
       assert TestRepo.get_by!(Entry, key: "email_provider").value == "ses"
@@ -366,7 +366,7 @@ defmodule PhoenixFlags.UI.DashboardLiveTest do
       # client-controlled — this is what a forged phx-submit looks like.
       html =
         view
-        |> element(~s(form[phx-value-key="email_provider"]))
+        |> element("#pf-form-email_provider")
         |> render_submit(%{"entry" => %{"value" => "postmark"}})
 
       assert html =~ "must be one of: mailjet, ses"
@@ -468,7 +468,7 @@ defmodule PhoenixFlags.UI.DashboardLiveTest do
 
       html =
         view
-        |> element(~s(form[phx-value-key="max_retries"]))
+        |> element("#pf-form-max_retries")
         |> render_submit(%{"entry" => %{"value" => "9"}})
 
       refute html =~ ~s(role="dialog")
@@ -482,7 +482,7 @@ defmodule PhoenixFlags.UI.DashboardLiveTest do
 
       html =
         view
-        |> element(~s(form[phx-value-key="max_retries"]))
+        |> element("#pf-form-max_retries")
         |> render_submit(%{"entry" => %{"value" => "not-a-number"}})
 
       assert html =~ ~s(role="dialog")
@@ -525,6 +525,198 @@ defmodule PhoenixFlags.UI.DashboardLiveTest do
       assert html |> String.split(~s(role="dialog")) |> length() == 2
       assert html =~ ~s(aria-labelledby="pf-modal-title-other")
       refute html =~ ~s(aria-labelledby="pf-modal-title-max_retries")
+    end
+  end
+
+  describe "targeting rules in the dialog" do
+    setup do
+      TestRepo.insert!(%Entry{
+        key: "max_retries",
+        value: "5",
+        type: "integer",
+        category: "system",
+        label: "Max Retries"
+      })
+
+      TestRepo.insert!(%Entry{
+        key: "api_key",
+        value: "",
+        type: "secret",
+        category: "system",
+        label: "API Key"
+      })
+
+      :ok
+    end
+
+    defp open_editor(view, key) do
+      view |> element(~s(button[phx-value-key="#{key}"])) |> render_click()
+    end
+
+    defp add_rule(view, key, params) do
+      view |> element("#pf-target-form-#{key}") |> render_submit(%{"target" => params})
+    end
+
+    test "the section explains itself and starts empty", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/flags")
+
+      html = open_editor(view, "max_retries")
+
+      assert html =~ "Targeting rules"
+      assert html =~ "the first match wins"
+      assert html =~ "No rules"
+    end
+
+    test "adding a rule lists it and applies it", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/flags")
+      open_editor(view, "max_retries")
+
+      html =
+        add_rule(view, "max_retries", %{
+          "attribute" => "company_id",
+          "operator" => "in",
+          "values" => "123, 456",
+          "value" => "9000"
+        })
+
+      assert html =~ "company_id"
+      assert html =~ "is one of"
+      assert html =~ "123, 456"
+      assert html =~ "9000"
+      refute html =~ "No rules"
+
+      assert [target] = TestConfig.targets("max_retries")
+      assert target.value == "9000"
+
+      assert [%{attribute: "company_id", operator: "in", values: ["123", "456"]}] =
+               target.conditions
+    end
+
+    test "deleting a rule removes it", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/flags")
+      open_editor(view, "max_retries")
+
+      add_rule(view, "max_retries", %{
+        "attribute" => "company_id",
+        "operator" => "in",
+        "values" => "123",
+        "value" => "9000"
+      })
+
+      assert [_] = TestConfig.targets("max_retries")
+
+      html = view |> element(".pf-target-delete") |> render_click()
+
+      assert html =~ "No rules"
+      assert TestConfig.targets("max_retries") == []
+    end
+
+    test "a rule value that is wrong for the type is reported, not saved", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/flags")
+      open_editor(view, "max_retries")
+
+      html =
+        add_rule(view, "max_retries", %{
+          "attribute" => "company_id",
+          "operator" => "in",
+          "values" => "123",
+          "value" => "not-a-number"
+        })
+
+      assert html =~ "must be a whole number"
+      assert TestConfig.targets("max_retries") == []
+    end
+
+    test "a blank attribute is reported", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/flags")
+      open_editor(view, "max_retries")
+
+      html =
+        add_rule(view, "max_retries", %{
+          "attribute" => "  ",
+          "operator" => "in",
+          "values" => "123",
+          "value" => "9"
+        })
+
+      assert html =~ "blank" or html =~ "must not be"
+      assert TestConfig.targets("max_retries") == []
+    end
+
+    test "no values is reported rather than creating a rule that matches everyone",
+         %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/flags")
+      open_editor(view, "max_retries")
+
+      html =
+        add_rule(view, "max_retries", %{
+          "attribute" => "company_id",
+          "operator" => "not_in",
+          "values" => "  ,  ",
+          "value" => "9"
+        })
+
+      assert html =~ "at least one value"
+      assert TestConfig.targets("max_retries") == []
+    end
+
+    test "a :secret flag is not offered a targeting section", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/flags")
+
+      html = open_editor(view, "api_key")
+
+      assert html =~ ~s(role="dialog")
+      refute html =~ "Targeting rules"
+    end
+
+    test "rules do not leak between dialogs", %{conn: conn} do
+      TestRepo.insert!(%Entry{
+        key: "other",
+        value: "x",
+        type: "string",
+        category: "system",
+        label: "Other"
+      })
+
+      {:ok, view, _html} = live(conn, "/flags")
+      open_editor(view, "max_retries")
+
+      add_rule(view, "max_retries", %{
+        "attribute" => "company_id",
+        "operator" => "in",
+        "values" => "123",
+        "value" => "9000"
+      })
+
+      view |> element(".pf-modal-close") |> render_click()
+      html = open_editor(view, "other")
+
+      assert html =~ "No rules"
+      refute html =~ "9000"
+    end
+
+    test "a forged delete for an unknown rule does not crash the view", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/flags")
+      open_editor(view, "max_retries")
+
+      assert render_hook_safe(view, "pf-delete-target", %{"target-id" => Ecto.UUID.generate()})
+      assert render_hook_safe(view, "pf-delete-target", %{"target-id" => "nonsense"})
+      assert render(view) =~ "System Flags"
+    end
+
+    test "a forged add with a malformed payload does not crash the view", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/flags")
+      open_editor(view, "max_retries")
+
+      for params <- [%{}, %{"attribute" => %{"a" => "b"}}, %{"values" => ["a"]}] do
+        assert render_hook_safe(view, "pf-add-target", %{
+                 "key" => "max_retries",
+                 "target" => params
+               })
+      end
+
+      assert render(view) =~ "System Flags"
+      assert TestConfig.targets("max_retries") == []
     end
   end
 
@@ -657,7 +849,7 @@ defmodule PhoenixFlags.UI.DashboardLiveTest do
       view |> element(~s(button[phx-value-key="checkout_flow"])) |> render_click()
 
       view
-      |> element(~s(form[phx-value-key="checkout_flow"]))
+      |> element("#pf-form-checkout_flow")
       |> render_submit(%{"entry" => %{"variants" => %{"new_flow" => "40", "control" => "60"}}})
 
       # Declared order, not the order the params happened to arrive in — bucket
@@ -672,7 +864,7 @@ defmodule PhoenixFlags.UI.DashboardLiveTest do
 
       html =
         view
-        |> element(~s(form[phx-value-key="checkout_flow"]))
+        |> element("#pf-form-checkout_flow")
         |> render_submit(%{"entry" => %{"variants" => %{"control" => "60", "new_flow" => "10"}}})
 
       assert html =~ "weights must total 100, got 70"
@@ -689,7 +881,7 @@ defmodule PhoenixFlags.UI.DashboardLiveTest do
       # defaults to 0 and the total then fails.
       html =
         view
-        |> element(~s(form[phx-value-key="checkout_flow"]))
+        |> element("#pf-form-checkout_flow")
         |> render_submit(%{"entry" => %{"variants" => %{"control" => "50", "bogus" => "50"}}})
 
       assert html =~ "weights must total 100"
@@ -706,7 +898,7 @@ defmodule PhoenixFlags.UI.DashboardLiveTest do
       # rebuilds `value` from the declared variants and drops anything the
       # client tried to set directly. The stored split is therefore unchanged.
       view
-      |> element(~s(form[phx-value-key="checkout_flow"]))
+      |> element("#pf-form-checkout_flow")
       |> render_submit(%{"entry" => %{"value" => "control=50,bogus=50"}})
 
       assert TestRepo.get_by!(Entry, key: "checkout_flow").value == "control=90,new_flow=10"
@@ -723,7 +915,7 @@ defmodule PhoenixFlags.UI.DashboardLiveTest do
       for forged <- [%{"nested" => "map"}, ["a", "list"]] do
         html =
           view
-          |> element(~s(form[phx-value-key="checkout_flow"]))
+          |> element("#pf-form-checkout_flow")
           |> render_submit(%{
             "entry" => %{"variants" => %{"control" => forged, "new_flow" => "10"}}
           })
@@ -740,7 +932,7 @@ defmodule PhoenixFlags.UI.DashboardLiveTest do
 
       html =
         view
-        |> element(~s(form[phx-value-key="checkout_flow"]))
+        |> element("#pf-form-checkout_flow")
         |> render_change(%{
           "entry" => %{"variants" => %{"control" => %{"a" => "b"}, "new_flow" => "10"}}
         })
@@ -755,7 +947,7 @@ defmodule PhoenixFlags.UI.DashboardLiveTest do
 
       html =
         view
-        |> element(~s(form[phx-value-key="checkout_flow"]))
+        |> element("#pf-form-checkout_flow")
         |> render_change(%{"entry" => %{"variants" => %{"control" => "70", "new_flow" => "10"}}})
 
       assert html =~ "Total 80%"

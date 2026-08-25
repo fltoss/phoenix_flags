@@ -36,7 +36,7 @@ defmodule PhoenixFlags.Migration do
   use Ecto.Migration
 
   @initial_version 1
-  @current_version 3
+  @current_version 4
   # Version that introduced the system_flags_meta table. From this version on
   # the schema version lives in that table; below it, in the table comment.
   @meta_version 3

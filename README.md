@@ -30,6 +30,8 @@ checks, and a simple API for building admin UIs. One dependency, no external ser
 - **Typed values** — boolean, integer, decimal, percentage, select, string, secret, variant
 - **A/B testing** — weighted variants assigned by a consistent hash of an identity,
   editable at runtime for gradual rollouts
+- **Targeting rules** — force a value for one user, company, or any attribute you
+  pass, added from the dashboard without a deploy
 - **Compile-time validation** — `flag/2` macro validates keys, types, and defaults at compile time
 - **Declarative flags** — define flags in code, auto-seeded on startup, stale flags auto-removed
 - **Cluster-aware** — writes notify all connected nodes immediately; a periodic
@@ -397,6 +399,109 @@ A missing identity would put every caller in the same bucket, so `variant/3`
 raises on `nil` (or anything that is not a non-empty string or an integer)
 rather than bucketing silently.
 
+## Targeting
+
+An A/B split is random by design. Targeting is the opposite: force a specific
+value for a specific caller — onboard a beta customer, unblock one account, raise
+a limit for one tenant. Rules live in the database and are added from the
+dashboard, so none of that needs a deploy.
+
+### 1. Provide a context
+
+Set it once where you already have the current user:
+
+```elixir
+# lib/my_app_web/plugs/flag_context.ex
+defmodule MyAppWeb.Plugs.FlagContext do
+  def init(opts), do: opts
+
+  def call(conn, _opts) do
+    case conn.assigns[:current_user] do
+      nil -> conn
+      user ->
+        PhoenixFlags.put_context(user_id: user.id, company_id: user.company_id)
+        conn
+    end
+  end
+end
+```
+
+Every read in that process is then targeted, with no change to the call sites:
+
+```elixir
+MyApp.SystemConfig.get("enable_benefits", false)
+MyApp.SystemConfig.variant("checkout_flow", user.id)
+```
+
+Or pass one explicitly, which wins over the process context:
+
+```elixir
+MyApp.SystemConfig.get("enable_benefits", false, context: %{company_id: 999})
+```
+
+### 2. Add a rule
+
+From the dashboard's edit dialog, or in code:
+
+```elixir
+MyApp.SystemConfig.put_target("enable_benefits",
+  conditions: [[attribute: :company_id, operator: :in, values: [123, 456]]],
+  value: "true"
+)
+
+MyApp.SystemConfig.targets("enable_benefits")
+MyApp.SystemConfig.delete_target(target_id)
+```
+
+Conditions within a rule are **ANDed**; rules are checked in the order they were
+added and the **first match wins**.
+
+| Operator | Matches when |
+|---|---|
+| `:in` | the context value is any of `values` |
+| `:not_in` | the context value is none of `values` |
+| `:eq` | the context value equals the first of `values` |
+| `:starts_with` | the context value starts with any of `values` |
+
+```elixir
+# ANDed conditions
+put_target("enable_benefits",
+  conditions: [
+    [attribute: :plan, operator: :eq, values: ["enterprise"]],
+    [attribute: :region, operator: :in, values: ["eu", "uk"]]
+  ],
+  value: "true"
+)
+```
+
+### What wins
+
+For every read, in order:
+
+1. A test stub (`MyModule.Test.stub/2`), in the test environment
+2. **A matching targeting rule**
+3. The stored value, or for a `:variant` flag the weighted split
+
+So a rule overrides an A/B split — pinning a customer to one arm is the point.
+
+### Things worth knowing
+
+- **Everything compares as strings.** A context of `%{company_id: 123}` matches a
+  rule value of `"123"`; every flag value is stored as a string and rule values
+  follow suit. Attribute keys too, so `:company_id` and `"company_id"` are the
+  same attribute. If a rule never seems to fire, check this first.
+- **A missing attribute never matches**, including for `:not_in` — "everyone
+  except these" will not sweep in callers you know nothing about.
+- **A rule value is validated against the flag's type**, so a `:boolean` rule
+  must be `"true"`/`"false"` and a `:variant` rule must name a declared variant.
+- **`:secret` flags cannot be targeted.** The rule value would be stored as
+  plaintext, defeating the encryptor.
+- **The context is per-process and is not inherited.** `Task.async/1` starts with
+  an empty one; pass `context: PhoenixFlags.context()` into the task, or set it
+  again inside.
+- **Cost when unused is a single `:persistent_term` read.** A flag with no rules
+  never even reads the context.
+
 ## Architecture
 
 ```
@@ -691,6 +796,7 @@ MyApp.SystemConfig.update_entry("enable_benefits", %{"value" => "true"},
 | Runtime changes | No (deploy required) | Yes | Yes |
 | Typed values | No | Boolean only | 8 types + validation |
 | A/B testing | No | No | Weighted variants, consistent hash |
+| Per-user targeting | No | Actor gates (code) | Runtime rules on any attribute |
 | Caching | N/A (in-memory) | ETS | `:persistent_term` (zero-copy) |
 | Cluster sync | No | Redis/Ecto polling | Direct node messaging |
 | Admin UI | N/A | No | Built-in dashboard, one router line |
@@ -711,6 +817,9 @@ MyApp.SystemConfig.update_entry("enable_benefits", %{"value" => "true"},
 | `select_options(key)` | `{label, value}` options for a `:select` flag, or `[]` |
 | `variant(key, identity, opts \\ [])` | Variant assigned to `identity`. Accepts `:default`, `:telemetry`. |
 | `variants(key)` | Declared `{label, value, weight}` variants for a `:variant` flag, or `[]` |
+| `targets(key)` | Targeting rules for a flag, in evaluation order |
+| `put_target(key, attrs)` | Add a targeting rule (`:conditions`, `:value`, optional `:position`) |
+| `delete_target(id)` | Delete a targeting rule |
 | `audit_log()` | All audit entries, newest first (requires `audit: true`) |
 | `audit_log(key)` | Audit entries for a specific key, newest first |
 
@@ -734,6 +843,15 @@ MyApp.SystemConfig.update_entry("enable_benefits", %{"value" => "true"},
 | `PhoenixFlags.Migration.up(opts)` | Run migrations up to version |
 | `PhoenixFlags.Migration.down(opts)` | Roll back migrations to version |
 | `PhoenixFlags.Migration.migrated_version()` | Current schema version |
+
+### Context API
+
+| Function | Description |
+|---|---|
+| `PhoenixFlags.put_context(attrs)` | Replace the current process's targeting context |
+| `PhoenixFlags.merge_context(attrs)` | Merge into it |
+| `PhoenixFlags.context()` | Read it |
+| `PhoenixFlags.clear_context()` | Clear it |
 
 ## Development
 
@@ -818,13 +936,10 @@ Probe.update_entry("exp", %{"value" => "control=20,new=80"})
 IO.inspect(for index <- 1..10, do: Probe.variant("exp", "user-#{index}"))
 ```
 
-> `bench/bench_helper.exs` points at the **test** database, so scripts that use
-> it — and `mix run bench/phoenix_flags_bench.exs` — leave rows behind that break
-> the next `mix test`. Clear them with:
->
-> ```bash
-> MIX_ENV=test mix run -e '{:ok, _} = PhoenixFlags.TestRepo.start_link(); PhoenixFlags.TestRepo.delete_all(PhoenixFlags.Entry)'
-> ```
+> `bench/bench_helper.exs` points at its own `phoenix_flags_bench` database,
+> created and migrated on first use. Scripts that require it therefore cannot
+> disturb `phoenix_flags_test` — which matters because they run outside the Ecto
+> sandbox, so their writes commit.
 
 ### Trying it in your own app
 

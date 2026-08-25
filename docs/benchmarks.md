@@ -8,6 +8,10 @@ Run benchmarks yourself:
 mix run bench/phoenix_flags_bench.exs
 ```
 
+Benchmarks use their own `phoenix_flags_bench` database, created and migrated on
+first run. They deliberately do not share the test database: they run outside the
+Ecto sandbox, so their writes commit.
+
 ## Environment
 
 - Elixir 1.20.0-rc.3 / OTP 27
@@ -28,6 +32,9 @@ Each function's database and network call count per invocation:
 | `select_options/1` | 0 | 0 | `flags/0` + list scan |
 | `variant/3` | 0 | 0 | `persistent_term.get` + SHA-256 + bucket walk |
 | `variants/1` | 0 | 0 | Compiled module attribute + list scan |
+| `get/3` with targeting | 0 | 0 | One extra `persistent_term.get` + rule walk |
+| `targets/1` | 1 | 0 | `SELECT` rules for one flag, with conditions |
+| `put_target/2`, `delete_target/1` | 2+ | N | Write + full cache reload, then peer notification |
 | `update_entry/3` | 2 | N | `SELECT` by key + `UPDATE` (cache patched in-memory) |
 
 `update_entry/3` also sends a fire-and-forget `:reload` message to `Node.list()` peers (N = number of connected nodes). Each peer then performs 1 DB call (`SELECT` all) to reload its local cache.
@@ -105,6 +112,41 @@ assignments/sec it is not a bottleneck for request-path use.
 
 Setting `ttl:` roughly doubles the cost, so leave it `nil` (the default) unless
 you actually want assignments to expire.
+
+### 4c. Targeting overhead
+
+Zero DB calls. Resolution is ordered so that the overwhelmingly common case is
+cheapest: a flag with **no rules** costs one `:persistent_term` read plus a map
+lookup, and never touches the process dictionary. The context is only fetched
+once a rule exists that could match.
+
+> That ordering was chosen by measurement, not intuition. Checking the context
+> first — to skip the `:persistent_term` read entirely when none is set — turned
+> out to be *slower*: `Process.get/1` plus a `Keyword.get/3` measured ~32 ns
+> against the ~18 ns read it was avoiding. Reversing it halved the
+> context-set-but-no-rules path.
+
+Measured in isolation against a no-op floor, same process:
+
+| Operation | median above floor |
+|---|---|
+| One `:persistent_term.get/2` | ~18 ns |
+| `Keyword.get` + `Process.get` + `map_size` | ~32 ns |
+
+So the added cost for a flag with no rules is roughly **one `persistent_term`
+read plus a map lookup** — on the order of 20 ns against a `get/2` in the low
+hundreds of nanoseconds.
+
+End-to-end medians for the four scenarios are not quoted here: the two "flag has
+no rules" cases provably perform identical work (the context is never read), yet
+repeat runs on a loaded machine differ by 2x with Benchee reporting deviations
+above 4000%. At this timescale only the isolated figures above are meaningful.
+`bench/phoenix_flags_bench.exs` section 4c runs all four in one process if you
+want to see them on your own hardware.
+
+Rule evaluation when a context *is* set adds the context normalisation (one pass,
+`to_string/1` per attribute) and a walk of that flag's rules until one matches —
+still no database call, and rules per flag are typically a handful.
 
 ### 5. `update_entry/3` (DB write + incremental cache patch)
 

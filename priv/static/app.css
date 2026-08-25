@@ -603,3 +603,126 @@
     border-radius: var(--pf-radius) var(--pf-radius) 0 0;
   }
 }
+
+/* ------------------------------------------------------------------ */
+/* Targeting rules                                                     */
+/* ------------------------------------------------------------------ */
+.pf-targets {
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--pf-border);
+}
+
+.pf-targets-title {
+  margin: 0 0 4px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--pf-text);
+}
+
+.pf-targets-hint,
+.pf-targets-empty {
+  margin: 0 0 10px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--pf-text-secondary);
+}
+
+.pf-targets-empty {
+  color: var(--pf-text-muted);
+}
+
+.pf-targets-list {
+  list-style: none;
+  margin: 0 0 12px;
+  padding: 0;
+  counter-reset: pf-target;
+}
+
+.pf-target {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--pf-border-light);
+  font-size: 13px;
+}
+
+.pf-target:last-child {
+  border-bottom: none;
+}
+
+.pf-target-rule {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.pf-target-cond {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.pf-target-and,
+.pf-target-op {
+  color: var(--pf-text-secondary);
+  font-size: 12px;
+}
+
+.pf-target-arrow {
+  color: var(--pf-text-muted);
+}
+
+.pf-target code {
+  padding: 1px 5px;
+  border-radius: var(--pf-radius-sm);
+  background: var(--pf-bg-muted);
+  font-size: 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.pf-target-value {
+  color: var(--pf-primary);
+}
+
+.pf-target-delete {
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  padding: 2px 4px;
+  color: var(--pf-error);
+  font-size: 12px;
+  cursor: pointer;
+  border-radius: var(--pf-radius-sm);
+}
+
+.pf-target-delete:hover {
+  text-decoration: underline;
+}
+
+.pf-target-delete:focus-visible {
+  outline: none;
+  box-shadow: var(--pf-focus-ring);
+}
+
+.pf-target-add {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.pf-target-input {
+  flex: 1 1 120px;
+  min-width: 0;
+  font-size: 13px;
+}
+
+.pf-target-op-select {
+  flex: 0 1 130px;
+  font-size: 13px;
+}
