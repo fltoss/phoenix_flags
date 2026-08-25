@@ -24,28 +24,25 @@ defmodule PhoenixFlags.Config do
     set to `false` to disable the periodic refresh
   """
 
-  @enforce_keys [:otp_app, :repo, :name]
-  defstruct [
-    :otp_app,
-    :repo,
-    :name,
-    :actor_fn,
-    :encryptor,
+  # One source of truth for the fields: `defstruct` and the accepted-options
+  # list are both derived from it, so a new field cannot be added without
+  # becoming a valid option (the two used to be maintained by hand, side by
+  # side, and could drift apart).
+  @fields [
+    otp_app: nil,
+    repo: nil,
+    name: nil,
+    actor_fn: nil,
+    encryptor: nil,
     cache_enabled: true,
     audit: false,
     refresh_interval: 60_000
   ]
 
-  @known_keys [
-    :otp_app,
-    :repo,
-    :name,
-    :actor_fn,
-    :encryptor,
-    :cache_enabled,
-    :audit,
-    :refresh_interval
-  ]
+  @enforce_keys [:otp_app, :repo, :name]
+  defstruct @fields
+
+  @known_keys Keyword.keys(@fields)
 
   @type t :: %__MODULE__{
           otp_app: atom(),

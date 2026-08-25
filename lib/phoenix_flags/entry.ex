@@ -106,7 +106,18 @@ defmodule PhoenixFlags.Entry do
   Casts a stored string value to its native Elixir type.
   """
   def cast_value(nil, _type), do: nil
-  def cast_value(value, "boolean"), do: value == "true"
+  def cast_value("true", "boolean"), do: true
+  def cast_value("false", "boolean"), do: false
+
+  # `changeset/3` only ever stores "true" or "false", so anything else came from
+  # outside the library (a hand-edited row, a data migration). The other casts
+  # warn and fall back rather than failing silently; do the same here. The
+  # fallback stays `false` on purpose — for a boolean flag, failing closed beats
+  # returning `nil` and changing what `get(key) == false` means.
+  def cast_value(value, "boolean") do
+    Logger.warning("PhoenixFlags: failed to cast #{inspect(value)} as boolean, using false")
+    false
+  end
 
   def cast_value(value, "integer") do
     case Integer.parse(value) do

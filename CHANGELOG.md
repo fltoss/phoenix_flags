@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Unexpected stored boolean values now warn instead of failing silently.**
+  `cast_value/2` was `value == "true"`, so a value that was neither `"true"`
+  nor `"false"` — only reachable via a hand-edited row or a data migration,
+  since `changeset/3` rejects anything else — read as `false` with no signal.
+  It still returns `false` (for a boolean flag, failing closed beats returning
+  `nil` and changing what `get(key) == false` means), but now logs a warning
+  like the integer and decimal casts already did.
+
+### Internal
+
+No behaviour change; all of these are covered by the existing suite.
+
+- Both write paths now build their changeset through one `value_changeset/3`.
+  The encrypt-then-validate sequence was duplicated across the cached and
+  uncached paths, which is why `:select` membership went unchecked on both at
+  once.
+- Removed a dead `rescue ArgumentError` in `read_persistent_term/2`;
+  `:persistent_term.get/2` returns the default for a missing key rather than
+  raising. Documented why the `get/1` call sites do still need theirs.
+- Documented the deliberate asymmetry in `update_in_caller/4`: unlike the
+  cached path it has no `rescue`, because with no GenServer to keep alive a
+  database error should reach the caller rather than be flattened into an
+  error changeset.
+- `PhoenixFlags.Config` derives both `defstruct` and its accepted-option list
+  from a single `@fields` attribute; the two were maintained side by side and
+  could drift.
+- Named the `999_999` sort sentinel in `all_grouped/1`.
+- Added `PhoenixFlags.EntryTest` covering `cast_value/2` and `changeset/3`,
+  which had no direct unit tests.
+
 ## [0.6.2] - 2026-08-25
 
 ### Fixed

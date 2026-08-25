@@ -13,6 +13,11 @@ defmodule PhoenixFlags.Server do
 
   require Logger
 
+  # Sort position for an entry with no declaration order — i.e. a row in the
+  # table that `flags/0` does not mention. Sorts it after every declared flag
+  # instead of ahead of them, which `nil` would do.
+  @undeclared_sort_position 999_999
+
   # ============================================================================
   # Public API
   # ============================================================================
@@ -48,11 +53,10 @@ defmodule PhoenixFlags.Server do
     end
   end
 
-  defp read_persistent_term(key, default) do
-    :persistent_term.get(key, default)
-  rescue
-    ArgumentError -> default
-  end
+  # `:persistent_term.get/2` returns the default for a missing key rather than
+  # raising, so no rescue is needed here — unlike the `get/1` calls in
+  # `get_config/1` and `safe_get_config/1`.
+  defp read_persistent_term(key, default), do: :persistent_term.get(key, default)
 
   @doc """
   Updates a config entry and refreshes the cache.
@@ -77,17 +81,28 @@ defmodule PhoenixFlags.Server do
   end
 
   # Uncached writes run in the caller's process, so they bypass the GenServer
-  # (and its Ecto sandbox-unfriendly ownership) entirely.
+  # (and its Ecto sandbox-unfriendly ownership) entirely. Note the deliberate
+  # absence of the `rescue` that `do_update/4` has: with no GenServer to keep
+  # alive, a database error should surface to the caller. A test that has lost
+  # its sandbox connection wants the exception, not an error changeset that
+  # hides it.
   defp update_in_caller(config, entry, attrs, actor) do
     old_value = entry.value
-    attrs = maybe_encrypt(attrs, entry.type, config)
 
-    changeset = Entry.changeset(entry, attrs, select_options: select_options(config, entry.key))
-
-    with {:ok, updated} <- config.repo.update(changeset) do
+    with {:ok, updated} <- config.repo.update(value_changeset(config, entry, attrs)) do
       maybe_audit(config, entry.key, old_value, updated.value, entry.type, actor)
       {:ok, updated}
     end
+  end
+
+  # Encrypting and then validating is the one sequence both write paths must
+  # perform identically, so it lives here instead of being duplicated. Keeping
+  # them in sync by hand is what let `:select` membership go unchecked on both
+  # paths at once.
+  defp value_changeset(%Config{} = config, %Entry{} = entry, attrs) do
+    attrs = maybe_encrypt(attrs, entry.type, config)
+
+    Entry.changeset(entry, attrs, select_options: select_options(config, entry.key))
   end
 
   # A module built by `use PhoenixFlags` always generates `select_options/1`,
@@ -166,9 +181,11 @@ defmodule PhoenixFlags.Server do
         order = read_flag_order(instance)
 
         entries
-        |> Enum.sort_by(&Map.get(order, &1.key, 999_999))
+        |> Enum.sort_by(&Map.get(order, &1.key, @undeclared_sort_position))
         |> Enum.group_by(& &1.category)
-        |> Enum.sort_by(fn {_category, [first | _]} -> Map.get(order, first.key, 999_999) end)
+        |> Enum.sort_by(fn {_category, [first | _]} ->
+          Map.get(order, first.key, @undeclared_sort_position)
+        end)
 
       :error ->
         []
@@ -227,10 +244,9 @@ defmodule PhoenixFlags.Server do
 
       entry ->
         old_value = entry.value
-        attrs = maybe_encrypt(attrs, entry.type, config)
 
-        entry
-        |> Entry.changeset(attrs, select_options: select_options(config, key))
+        config
+        |> value_changeset(entry, attrs)
         |> config.repo.update()
         |> case do
           {:ok, updated} ->
