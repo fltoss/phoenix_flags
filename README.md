@@ -451,6 +451,13 @@ defmodule MyAppWeb.Router do
 end
 ```
 
+> **The dashboard has no built-in authentication.** It renders and edits every
+> flag for anyone who can reach the route — including `:secret` values, which are
+> write-only in the UI but whose changes are still actor-attributed in the audit
+> log. Protect it yourself, at both layers: a router pipeline for the initial HTTP
+> request (`pipe_through`) *and* an `:on_mount` hook for the LiveView connection.
+> A pipeline alone does not guard the WebSocket mount.
+
 Visit `/admin/flags` to see all your flags grouped by category with:
 - Toggle switches for booleans
 - Inline edit forms for other types
@@ -614,6 +621,16 @@ mix run dev.exs
 This boots a minimal Phoenix server on http://localhost:4005 with sample flags,
 audit logging enabled, and auto-opens the browser. It uses its own
 `phoenix_flags_dev` database (created automatically).
+
+The test suite needs a reachable PostgreSQL; `mix test` creates and migrates
+`phoenix_flags_test` itself. Override the connection with the `POSTGRES_USER`,
+`POSTGRES_PASSWORD` and `DB_HOST` environment variables.
+
+```bash
+mix test
+mix format --check-formatted
+mix credo
+```
 
 ## License
 

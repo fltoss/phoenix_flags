@@ -70,22 +70,21 @@ defmodule PhoenixFlags.Server do
       GenServer.call(instance, {:update, key, attrs, actor}, timeout)
     else
       case config.repo.get_by(Entry, key: key) do
-        nil ->
-          {:error, :not_found}
-
-        entry ->
-          old_value = entry.value
-          attrs = maybe_encrypt(attrs, entry.type, config)
-
-          case entry |> Entry.changeset(attrs) |> config.repo.update() do
-            {:ok, updated} ->
-              maybe_audit(config, key, old_value, updated.value, entry.type, actor)
-              {:ok, updated}
-
-            error ->
-              error
-          end
+        nil -> {:error, :not_found}
+        entry -> update_in_caller(config, entry, attrs, actor)
       end
+    end
+  end
+
+  # Uncached writes run in the caller's process, so they bypass the GenServer
+  # (and its Ecto sandbox-unfriendly ownership) entirely.
+  defp update_in_caller(config, entry, attrs, actor) do
+    old_value = entry.value
+    attrs = maybe_encrypt(attrs, entry.type, config)
+
+    with {:ok, updated} <- entry |> Entry.changeset(attrs) |> config.repo.update() do
+      maybe_audit(config, entry.key, old_value, updated.value, entry.type, actor)
+      {:ok, updated}
     end
   end
 

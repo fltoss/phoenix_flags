@@ -65,15 +65,7 @@ defmodule PhoenixFlags do
 
   @doc false
   defmacro __before_compile__(env) do
-    declared_flags = Module.get_attribute(env.module, :phoenix_flags) || []
-    encryptor_set? = Module.get_attribute(env.module, :phoenix_flags_encryptor_set?) || false
-    secret_flags = for flag <- declared_flags, flag.type == :secret, do: flag.key
-
-    if secret_flags != [] and not encryptor_set? do
-      raise PhoenixFlags.Error,
-            "#{inspect(env.module)} declares :secret flags #{inspect(secret_flags)} but no :encryptor was passed to `use PhoenixFlags`. " <>
-              "Add `encryptor: MyApp.MyEncryptor` (a module exporting encrypt/1 and decrypt/1) or remove the :secret flags."
-    end
+    validate_encryptor_present!(env)
 
     quote do
       @doc """
@@ -92,6 +84,20 @@ defmodule PhoenixFlags do
           _ -> []
         end
       end
+    end
+  end
+
+  # `:secret` flags are meaningless without an encryptor, and the failure would
+  # otherwise only surface at runtime on the first read.
+  defp validate_encryptor_present!(env) do
+    declared_flags = Module.get_attribute(env.module, :phoenix_flags) || []
+    encryptor_set? = Module.get_attribute(env.module, :phoenix_flags_encryptor_set?) || false
+    secret_flags = for flag <- declared_flags, flag.type == :secret, do: flag.key
+
+    if secret_flags != [] and not encryptor_set? do
+      raise PhoenixFlags.Error,
+            "#{inspect(env.module)} declares :secret flags #{inspect(secret_flags)} but no :encryptor was passed to `use PhoenixFlags`. " <>
+              "Add `encryptor: MyApp.MyEncryptor` (a module exporting encrypt/1 and decrypt/1) or remove the :secret flags."
     end
   end
 
