@@ -425,6 +425,33 @@ defmodule PhoenixFlags.UI.DashboardLiveTest do
                ~s(phx-mounted="[[&quot;focus_first&quot;,{&quot;to&quot;:&quot;#pf-modal-body-max_retries&quot;}]]")
     end
 
+    test "the footer is the last thing in the dialog, below the targeting section",
+         %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/flags")
+
+      html = view |> element(~s(button[phx-value-key="max_retries"])) |> render_click()
+
+      body_at = :binary.match(html, "pf-modal-body") |> elem(0)
+      targets_at = :binary.match(html, "pf-targets") |> elem(0)
+      footer_at = :binary.match(html, "pf-modal-footer") |> elem(0)
+
+      # The footer used to sit inside the value form, which put Save and Cancel
+      # in the middle of the dialog once the targeting section appeared below.
+      assert body_at < targets_at
+      assert targets_at < footer_at
+    end
+
+    test "Save submits the value form from outside it", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/flags")
+
+      html = view |> element(~s(button[phx-value-key="max_retries"])) |> render_click()
+
+      # HTML forbids nesting the value form and the targeting form, so the
+      # shared footer lives outside both and the submit button is associated by
+      # `form=`. Without that attribute the button would submit nothing.
+      assert html =~ ~s(<button type="submit" form="pf-form-max_retries")
+    end
+
     test "Cancel closes the dialog", %{conn: conn} do
       {:ok, view, _html} = live(conn, "/flags")
 

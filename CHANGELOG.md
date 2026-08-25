@@ -82,6 +82,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Save and Cancel sat in the middle of the edit dialog.** Adding the targeting
+  section below the value form left the footer stranded between the two, because
+  HTML forbids nesting forms so the footer had to live inside the value one. The
+  footer now sits outside both forms at the bottom of the dialog, with the submit
+  button associated by HTML5's `form` attribute. The dialog is also a flex column
+  now: the header and footer are pinned and only the body scrolls, so Save stays
+  visible on a tall dialog.
+
 - **A single bad `:variant` weights string produced two identical changeset
   errors**, which the dashboard rendered twice. `Type.validate_value/2` and the
   declared-name check both parsed the value and both reported the same failure;

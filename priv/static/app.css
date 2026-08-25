@@ -519,10 +519,12 @@
 .pf-modal {
   position: relative;
   z-index: 1;
+  display: flex;
+  flex-direction: column;
   width: 100%;
   max-width: 460px;
   max-height: calc(100vh - 48px);
-  overflow-y: auto;
+  overflow: hidden;
   background: var(--pf-bg);
   border: 1px solid var(--pf-border);
   border-radius: var(--pf-radius);
@@ -531,6 +533,7 @@
 
 .pf-modal-header {
   display: flex;
+  flex-shrink: 0;
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
@@ -571,6 +574,9 @@
 }
 
 .pf-modal-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
   padding: 20px;
 }
 
@@ -583,6 +589,7 @@
 
 .pf-modal-footer {
   display: flex;
+  flex-shrink: 0;
   justify-content: flex-end;
   align-items: center;
   gap: 8px;

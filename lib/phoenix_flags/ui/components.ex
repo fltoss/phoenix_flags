@@ -121,11 +121,6 @@ if Code.ensure_loaded?(Phoenix.Component) do
                 select_options={@select_options}
                 variants={@variants}
               />
-
-              <div class="pf-modal-footer">
-                <button type="button" phx-click="pf-cancel" class="pf-btn">Cancel</button>
-                <button type="submit" class="pf-btn pf-btn-primary">Save</button>
-              </div>
             </form>
 
             <.targeting_section
@@ -136,6 +131,18 @@ if Code.ensure_loaded?(Phoenix.Component) do
               variants={@variants}
               select_options={@select_options}
             />
+          </div>
+
+          <%!-- The footer sits outside both forms so it stays at the bottom of
+                the dialog. `form=` associates the submit button with the value
+                form regardless of where it is in the tree, which is how the two
+                sibling forms (HTML forbids nesting them) keep one shared
+                footer. --%>
+          <div class="pf-modal-footer">
+            <button type="button" phx-click="pf-cancel" class="pf-btn">Cancel</button>
+            <button type="submit" form={"pf-form-#{@entry.key}"} class="pf-btn pf-btn-primary">
+              Save
+            </button>
           </div>
         </div>
       </div>
