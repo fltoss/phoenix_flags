@@ -83,7 +83,8 @@ defmodule PhoenixFlags.Server do
   ## Options
 
     * `:default` — returned when the flag does not exist, is not a `:variant`
-      flag, or the instance is not running. Defaults to `nil`.
+      flag, the instance is not running, or the identity is unusable. Defaults to
+      `nil`.
     * `:telemetry` — when `true`, emits `[:phoenix_flags, :variant, :assigned]`
       with `%{flag: key, identity: identity, variant: variant, instance: instance}`
       as metadata, so exposures can be piped into your own analytics. Off by
@@ -91,13 +92,29 @@ defmodule PhoenixFlags.Server do
     * `:now` — current time in milliseconds, for testing TTL rollover.
   """
   def variant(instance, key, identity, opts \\ []) do
-    default = Keyword.get(opts, :default)
-
     case resolve_variant(instance, key, identity, opts) do
-      nil -> default
+      nil -> safe_opt(opts, :default, nil)
       assigned -> maybe_emit_assigned(assigned, instance, key, identity, opts)
     end
+  rescue
+    error ->
+      # Reads must not take down the caller. An unusable identity is a data
+      # condition as often as a coding one — an anonymous visitor, a record with
+      # no id — so warn loudly and fall back, the same way fallback_read/3 does.
+      # `PhoenixFlags.Variant.assign/4` stays strict for direct callers.
+      Logger.warning(
+        "PhoenixFlags: variant assignment failed for #{inspect(key)}: " <>
+          Exception.message(error)
+      )
+
+      safe_opt(opts, :default, nil)
   end
+
+  # Every option read on this path tolerates a non-keyword `opts`. The rescue
+  # above must not itself be able to raise, and a malformed `opts` should not
+  # throw away an assignment that was computed perfectly well.
+  defp safe_opt(opts, key, default) when is_list(opts), do: Keyword.get(opts, key, default)
+  defp safe_opt(_opts, _key, default), do: default
 
   defp resolve_variant(instance, key, identity, opts) do
     case safe_get_config(instance) do
@@ -123,6 +140,8 @@ defmodule PhoenixFlags.Server do
 
   defp assign_variant(_other, _key, _identity, _opts), do: nil
 
+  defp variant_from_db(%Config{}, key) when not is_binary(key), do: nil
+
   defp variant_from_db(%Config{} = config, key) do
     case config.repo.get_by(Entry, key: key) do
       %Entry{type: "variant"} = entry -> decrypted_cast_value(entry, config)
@@ -133,12 +152,12 @@ defmodule PhoenixFlags.Server do
       nil
 
     error ->
-      Logger.warning("PhoenixFlags: variant read failed for #{key}: #{inspect(error)}")
+      Logger.warning("PhoenixFlags: variant read failed for #{inspect(key)}: #{inspect(error)}")
       nil
   end
 
   defp maybe_emit_assigned(assigned, instance, key, identity, opts) do
-    if Keyword.get(opts, :telemetry, false) do
+    if safe_opt(opts, :telemetry, false) do
       :telemetry.execute(
         [:phoenix_flags, :variant, :assigned],
         %{},
@@ -156,7 +175,17 @@ defmodule PhoenixFlags.Server do
 
   Accepts an optional `:timeout` (in milliseconds, default `5000`).
   """
-  def update_entry(instance, key, attrs, opts \\ []) do
+  def update_entry(instance, key, attrs, opts \\ [])
+
+  # `key` is caller-supplied and the column is a string, so a non-binary key
+  # would raise Ecto.Query.CastError from the lookup. The uncached path has no
+  # rescue by design (see update_in_caller/4), so screen the key out up front
+  # rather than querying with it.
+  def update_entry(_instance, key, _attrs, _opts) when not is_binary(key) do
+    {:error, :not_found}
+  end
+
+  def update_entry(instance, key, attrs, opts) do
     config = get_config(instance)
     actor = Keyword.get(opts, :actor)
 
@@ -382,7 +411,7 @@ defmodule PhoenixFlags.Server do
     end
   rescue
     error ->
-      Logger.error("PhoenixFlags: failed to update #{key}: #{inspect(error)}")
+      Logger.error("PhoenixFlags: failed to update #{inspect(key)}: #{inspect(error)}")
 
       changeset =
         %Entry{key: key}
@@ -513,9 +542,22 @@ defmodule PhoenixFlags.Server do
             |> maybe_change(:type, existing.type, declared_type)
 
           metadata_changes =
-            if type_changed?,
-              do: Map.put(metadata_changes, :value, Map.get(declared, :value, "")),
-              else: metadata_changes
+            cond do
+              type_changed? ->
+                Map.put(metadata_changes, :value, Map.get(declared, :value, ""))
+
+              variant_set_changed?(declared, existing) ->
+                Logger.warning(
+                  "PhoenixFlags: #{inspect(key)} declares a different set of variants than is stored " <>
+                    "(#{inspect(existing.value)} -> #{inspect(declared.value)}); resetting the " <>
+                    "split. Any runtime rollout percentages for this flag are lost."
+                )
+
+                Map.put(metadata_changes, :value, declared.value)
+
+              true ->
+                metadata_changes
+            end
 
           if map_size(metadata_changes) > 0 do
             [{existing, metadata_changes} | acc]
@@ -582,6 +624,33 @@ defmodule PhoenixFlags.Server do
   defp maybe_change(changes, _field, same, same), do: changes
   defp maybe_change(changes, field, _old, new), do: Map.put(changes, field, new)
 
+  # A :variant flag's weights are an operational dial, so a runtime rollout must
+  # survive a deploy — that is the whole point, and it is why the stored value is
+  # otherwise left alone here.
+  #
+  # But if the declared *set* of variants changes, the stored split still names
+  # variants the code no longer has, and `variant/3` would go on assigning them:
+  # callers matching on the declared names then crash on a value that cannot
+  # occur in their code. Reset in that case only, mirroring the value reset on a
+  # type change. Comparison is by set, so merely reordering the declaration keeps
+  # the rollout (order is taken from the stored value).
+  defp variant_set_changed?(%{type: "variant", value: declared_value}, existing) do
+    variant_name_set(declared_value) != variant_name_set(existing.value)
+  end
+
+  defp variant_set_changed?(_declared, _existing), do: false
+
+  defp variant_name_set(value) when is_binary(value) do
+    case PhoenixFlags.Variant.parse_weights(value) do
+      {:ok, weights} -> weights |> Enum.map(&elem(&1, 0)) |> Enum.sort()
+      # Unparseable stored values must also be reset, so give them a set no
+      # declaration can equal.
+      {:error, _message} -> :unparseable
+    end
+  end
+
+  defp variant_name_set(_value), do: :unparseable
+
   # Secret defaults must never reach the database as plaintext. Encrypting
   # here covers both seed inserts and the value reset on type changes.
   defp encrypt_seed_value(%{type: "secret", value: value} = seed_map, %Config{
@@ -626,14 +695,14 @@ defmodule PhoenixFlags.Server do
 
       other ->
         Logger.warning(
-          "PhoenixFlags: failed to decrypt secret #{key}: decrypt/1 returned #{inspect(other)}"
+          "PhoenixFlags: failed to decrypt secret #{inspect(key)}: decrypt/1 returned #{inspect(other)}"
         )
 
         nil
     end
   rescue
     error ->
-      Logger.warning("PhoenixFlags: failed to decrypt secret #{key}: #{inspect(error)}")
+      Logger.warning("PhoenixFlags: failed to decrypt secret #{inspect(key)}: #{inspect(error)}")
       nil
   end
 
@@ -669,6 +738,8 @@ defmodule PhoenixFlags.Server do
     read_persistent_term(order_key(instance), %{})
   end
 
+  defp fallback_read(%Config{}, key, default) when not is_binary(key), do: default
+
   defp fallback_read(%Config{} = config, key, default) do
     case config.repo.get_by(Entry, key: key) do
       # Same pipeline as the cached path — secrets must be decrypted here
@@ -681,7 +752,7 @@ defmodule PhoenixFlags.Server do
       default
 
     error ->
-      Logger.warning("PhoenixFlags: fallback read failed for #{key}: #{inspect(error)}")
+      Logger.warning("PhoenixFlags: fallback read failed for #{inspect(key)}: #{inspect(error)}")
       default
   end
 

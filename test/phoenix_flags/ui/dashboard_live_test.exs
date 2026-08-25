@@ -374,6 +374,81 @@ defmodule PhoenixFlags.UI.DashboardLiveTest do
     end
   end
 
+  describe "forged events cannot crash the dashboard" do
+    setup do
+      TestRepo.insert!(%Entry{
+        key: "my_bool",
+        value: "true",
+        type: "boolean",
+        category: "test",
+        label: "My Boolean"
+      })
+
+      :ok
+    end
+
+    test "pf-save naming a key that does not exist", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/flags")
+
+      # update_entry/4 returns {:error, :not_found} for an unknown key, which is
+      # not a changeset — to_form/2 used to raise on it and take the view down.
+      assert render_hook_safe(view, "pf-save", %{
+               "key" => "no-such-flag",
+               "entry" => %{"value" => "x"}
+             })
+
+      assert render(view) =~ "System Flags"
+    end
+
+    test "an unknown event name", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/flags")
+
+      assert render_hook_safe(view, "pf-nonsense", %{"anything" => "goes"})
+      assert render(view) =~ "System Flags"
+    end
+
+    test "a known event with a missing field", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/flags")
+
+      for {event, params} <- [
+            {"pf-save", %{"key" => "my_bool"}},
+            {"pf-save", %{}},
+            {"pf-validate", %{"key" => "my_bool"}},
+            {"pf-toggle", %{}},
+            {"pf-edit", %{}}
+          ] do
+        assert render_hook_safe(view, event, params),
+               "#{event} #{inspect(params)} killed the view"
+      end
+
+      assert render(view) =~ "System Flags"
+    end
+
+    test "pf-toggle on a non-boolean flag is ignored", %{conn: conn} do
+      TestRepo.insert!(%Entry{
+        key: "a_string",
+        value: "hello",
+        type: "string",
+        category: "test",
+        label: "A String"
+      })
+
+      {:ok, view, _html} = live(conn, "/flags")
+
+      assert render_hook_safe(view, "pf-toggle", %{"key" => "a_string"})
+      assert TestRepo.get_by!(Entry, key: "a_string").value == "hello"
+    end
+
+    # Pushes an event straight at the LiveView, bypassing form/element helpers so
+    # the payload shape is entirely ours. Returns true if the view survived.
+    defp render_hook_safe(view, event, params) do
+      Phoenix.LiveViewTest.render_click(view, event, params)
+      true
+    catch
+      :exit, reason -> flunk("view exited on #{event}: #{inspect(reason)}")
+    end
+  end
+
   describe "variant" do
     setup do
       config = %PhoenixFlags.Config{
@@ -481,6 +556,42 @@ defmodule PhoenixFlags.UI.DashboardLiveTest do
       |> render_submit(%{"entry" => %{"value" => "control=50,bogus=50"}})
 
       assert TestRepo.get_by!(Entry, key: "checkout_flow").value == "control=90,new_flow=10"
+    end
+
+    test "a forged weight that is not a string cannot crash the LiveView", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/variant-flags")
+
+      view |> element(~s(button[phx-value-key="checkout_flow"])) |> render_click()
+
+      # Params are client-controlled: a nested map where a number belongs used to
+      # reach string interpolation and raise Protocol.UndefinedError inside the
+      # LiveView process. It must degrade to an ordinary validation error.
+      for forged <- [%{"nested" => "map"}, ["a", "list"]] do
+        html =
+          view
+          |> element(~s(form[phx-value-key="checkout_flow"]))
+          |> render_submit(%{
+            "entry" => %{"variants" => %{"control" => forged, "new_flow" => "10"}}
+          })
+
+        assert html =~ "weights must total 100"
+        assert TestRepo.get_by!(Entry, key: "checkout_flow").value == "control=90,new_flow=10"
+      end
+    end
+
+    test "a forged weight is also survivable on the change event", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/variant-flags")
+
+      view |> element(~s(button[phx-value-key="checkout_flow"])) |> render_click()
+
+      html =
+        view
+        |> element(~s(form[phx-value-key="checkout_flow"]))
+        |> render_change(%{
+          "entry" => %{"variants" => %{"control" => %{"a" => "b"}, "new_flow" => "10"}}
+        })
+
+      assert html =~ "Total 10%"
     end
 
     test "the running total updates live as weights change", %{conn: conn} do

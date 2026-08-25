@@ -7,6 +7,8 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
 
     alias PhoenixFlags.Entry
 
+    require Logger
+
     @impl true
     def mount(_params, session, socket) do
       config_module =
@@ -94,10 +96,30 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
         {:ok, _entry} ->
           {:noreply, reload(socket) |> assign(:editing_key, nil)}
 
-        {:error, changeset} ->
+        {:error, %Ecto.Changeset{} = changeset} ->
           forms = Map.put(socket.assigns.forms, key, to_form(changeset, as: :entry))
           {:noreply, assign(socket, :forms, forms)}
+
+        {:error, reason} ->
+          # A forged event can name a key that is not in the table, and
+          # update_entry/4 then returns {:error, :not_found} — not a changeset,
+          # and to_form/2 raises on it. Leave edit mode rather than taking the
+          # dashboard down.
+          Logger.warning(
+            "PhoenixFlags: dashboard could not save #{inspect(key)}: #{inspect(reason)}"
+          )
+
+          {:noreply, assign(socket, :editing_key, nil)}
       end
+    end
+
+    @impl true
+    def handle_event(event, _params, socket) do
+      # Events and their shapes are client-controlled, so an unknown name or a
+      # missing field must not crash the view for want of a matching clause.
+      Logger.warning("PhoenixFlags: dashboard ignoring unexpected event #{inspect(event)}")
+
+      {:noreply, socket}
     end
 
     @impl true
@@ -144,7 +166,7 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
         declared ->
           value =
             Enum.map_join(declared, ",", fn {_label, name, _weight} ->
-              "#{name}=#{Map.get(submitted, name, "0")}"
+              "#{name}=#{weight_param(submitted, name)}"
             end)
 
           params |> Map.delete("variants") |> Map.put("value", value)
@@ -152,6 +174,18 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
     end
 
     defp variant_attrs(_socket, _key, params), do: params
+
+    # Params are client-controlled, so a forged payload can put a map or list
+    # where a number belongs — and interpolating one raises
+    # Protocol.UndefinedError inside the LiveView. Anything that is not a plain
+    # string becomes "0", which then fails the total check and surfaces as an
+    # ordinary field error.
+    defp weight_param(submitted, name) do
+      case Map.get(submitted, name) do
+        value when is_binary(value) -> value
+        _other -> "0"
+      end
+    end
 
     defp variant_names(socket, key) do
       socket.assigns.config_module.variants(key)

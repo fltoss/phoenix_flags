@@ -7,6 +7,87 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-08-25
+
+Bug fixes from a review of the 0.7.0 A/B feature, plus two crash paths that
+predate it. Every fix below is covered by a test that was verified to fail
+without it.
+
+### Fixed
+
+- **Hash parts could be re-partitioned, aliasing two experiments together.**
+  The seed, flag key and identity were joined with `":"`, so
+  `variant("exp", "org:123")` and `variant("exp:org", "123")` hashed identically
+  — a 100% collision rate, not a rare one. Composite identities like `"org:123"`
+  are common enough for this to bite. Parts are now length-prefixed. Distribution
+  is unchanged (50.02/49.98 over 20k identities); collisions dropped from
+  5000/5000 to chance.
+
+  This changes every assignment relative to 0.7.0. Since 0.7.0 was tagged but
+  never published to Hex, nobody should be affected in practice — but if you
+  installed it from git, expect your population to reshuffle once.
+
+- **A changed variant set kept assigning removed variants.** Seeding deliberately
+  leaves the stored weights alone so a runtime rollout survives a deploy. But
+  when the declared *set* of variants changed, the stored split still named
+  variants the code no longer had, and `variant/3` went on assigning them —
+  crashing callers that pattern match on the declared names. Seeding now resets
+  the split (with a warning) when the set differs, mirroring the existing reset
+  on a type change. Comparison is by set, so a rollout survives both a
+  reordering and any weight change.
+
+- **`variant/3` raised on an unusable identity.** A `nil` identity is a data
+  condition — an anonymous visitor, a record without an id — not necessarily a
+  coding mistake, and it took down the caller's process. It now warns and returns
+  `:default`, consistent with how `get/3` handles a failed read.
+  `PhoenixFlags.Variant.assign/4` stays strict for direct callers.
+
+- **A forged dashboard weight crashed the LiveView.** A non-string value in
+  `entry[variants][...]` reached string interpolation and raised
+  `Protocol.UndefinedError`. It is now coerced to `0`, which surfaces as an
+  ordinary "must total 100" field error.
+
+- **A forged `pf-save` for an unknown key crashed the dashboard.**
+  `update_entry/4` returns `{:error, :not_found}` for a key that is not in the
+  table; that bound as `changeset` and `to_form/2` raised on it. The dashboard
+  also gained a catch-all `handle_event/3`, so an unknown event name or a missing
+  field no longer takes the view down for want of a matching clause.
+
+- **Log statements inside rescue handlers could themselves raise** — *predates
+  0.7.0*. Several interpolated the flag key directly, and `String.Chars` is
+  undefined for a map, tuple or pid. Because these sat inside `rescue` blocks,
+  the failure escaped to the caller: `get("some_key")` with a map key crashed
+  with `Protocol.UndefinedError` instead of returning the default. All such log
+  statements now use `inspect/1`, which is also unambiguous for keys containing
+  spaces. Log message format changed accordingly.
+
+- **A non-string key reached the database** — *predates 0.7.0*. `get/3`,
+  `update_entry/4` and `variant/3` now screen the key before querying, rather
+  than relying on a rescue to mop up an `Ecto.Query.CastError`.
+
+### Changed
+
+- **A stored split must name every declared variant.** Previously a subset was
+  accepted, so `"a=100"` could be saved for a two-variant flag — and then be
+  reset by the next restart, because seeding reconciles the stored set against
+  the declaration. Writes are now durable or rejected; use a weight of `0` to
+  switch a variant off.
+
+- **Declaration options that would be ignored are now rejected**, the same
+  reasoning as `PhoenixFlags.Config.new!/1` refusing unknown keys: `:default` on
+  a `:variant` flag (its value comes from `:variants`), and `:ttl` or `:seed` on
+  a non-variant flag.
+
+### Added
+
+- `test/phoenix_flags/variant_robustness_test.exs` — regression tests for each
+  fix above, plus a fuzz suite that throws ~40 malformed inputs (separator abuse,
+  unicode, huge and negative weights, wrong types) at `Variant.parse/2`,
+  `parse_weights/1`, `Entry.cast_value/2` and `Entry.changeset/3`, asserting they
+  only ever return and never raise. The log-statement bug above was found this
+  way.
+
+
 ## [0.7.0] - 2026-08-25
 
 ### Added

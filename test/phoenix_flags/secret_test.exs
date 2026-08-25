@@ -188,7 +188,7 @@ defmodule PhoenixFlags.SecretTest do
           {:ok, _} = SecretConfig.update_entry("api_key", %{"value" => "sk-doomed"})
         end)
 
-      assert log =~ "failed to decrypt secret api_key"
+      assert log =~ ~s(failed to decrypt secret "api_key")
       refute SecretConfig.get("api_key") == :error
       assert SecretConfig.get("api_key") == nil
     end

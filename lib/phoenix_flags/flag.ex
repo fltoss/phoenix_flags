@@ -88,6 +88,8 @@ defmodule PhoenixFlags.Flag do
     validate_type!(flag.type)
     validate_options!(flag.type, flag.options)
     validate_variants!(flag.type, flag.variants)
+    validate_variant_only!(flag.type, :ttl, flag.ttl)
+    validate_variant_only!(flag.type, :seed, flag.seed)
     validate_ttl!(flag.ttl)
     validate_seed!(flag.seed)
     validate_default!(flag.type, flag.default, flag.options)
@@ -175,6 +177,18 @@ defmodule PhoenixFlags.Flag do
           "PhoenixFlags.Flag :variants is only valid for :variant type, got type: :#{type}"
   end
 
+  # A silently ignored option is a trap — the same reasoning as
+  # PhoenixFlags.Config.new!/1 rejecting unknown keys, where a typo'd
+  # `audit_enabled:` would leave auditing off without a word.
+  defp validate_variant_only!(:variant, _option, _value), do: :ok
+  defp validate_variant_only!(_type, _option, nil), do: :ok
+
+  defp validate_variant_only!(type, option, value) do
+    raise PhoenixFlags.Error,
+          "PhoenixFlags.Flag :#{option} is only valid for :variant type, got type: " <>
+            ":#{type} with :#{option} #{inspect(value)}"
+  end
+
   # Mirrors PhoenixFlags.Config.validate_refresh_interval!/1 — nil (infinite) or
   # a positive number of milliseconds.
   defp validate_ttl!(nil), do: :ok
@@ -195,8 +209,15 @@ defmodule PhoenixFlags.Flag do
   end
 
   # A :variant flag's stored value is its weights, built by to_seed_map/1, so
-  # :default plays no part and must not be required.
-  defp validate_default!(:variant, _value, _options), do: :ok
+  # :default plays no part. Accept the struct default of "" and reject anything
+  # else rather than dropping it silently.
+  defp validate_default!(:variant, "", _options), do: :ok
+
+  defp validate_default!(:variant, value, _options) do
+    raise PhoenixFlags.Error,
+          "PhoenixFlags.Flag :default is not used by a :variant flag — its stored value is " <>
+            "built from :variants — got: #{inspect(value)}. Put the split in :variants instead."
+  end
 
   defp validate_default!(type, "", _options) when type in [:integer, :decimal, :percentage] do
     raise PhoenixFlags.Error,

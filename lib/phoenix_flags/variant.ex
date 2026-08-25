@@ -14,9 +14,11 @@ defmodule PhoenixFlags.Variant do
 
   ## Assignment
 
-  The hash input is `seed : key : identity`, run through SHA-256, with the
-  leading 64 bits taken modulo #{10_000}. The resulting point is looked up in a
-  cumulative bucket table built once when the cache loads.
+  The seed, flag key and identity are length-prefixed, concatenated, and run
+  through SHA-256, with the leading 64 bits taken modulo #{10_000}. The resulting
+  point is looked up in a cumulative bucket table built once when the cache
+  loads. (Length prefixes rather than a separator, so that a key or identity
+  containing the separator cannot alias two different experiments together.)
 
   SHA-256 rather than `:erlang.phash2/2` is deliberate: `phash2` is not
   guaranteed stable across OTP major versions, so an OTP upgrade would silently
@@ -191,10 +193,21 @@ defmodule PhoenixFlags.Variant do
   end
 
   defp bucket_point(%__MODULE__{ttl: ttl, seed: seed}, key, identity, opts) do
-    now = Keyword.get_lazy(opts, :now, fn -> System.os_time(:millisecond) end)
+    now = now_from(opts)
 
     hash_point([seed_part(seed), key, identity, Integer.to_string(epoch(identity, ttl, now))])
   end
+
+  # Tolerates a malformed `opts` rather than raising: assignment is a read, and a
+  # caller passing the wrong shape should not lose an answer we can compute.
+  defp now_from(opts) when is_list(opts) do
+    case Keyword.get(opts, :now) do
+      now when is_integer(now) -> now
+      _other -> System.os_time(:millisecond)
+    end
+  end
+
+  defp now_from(_opts), do: System.os_time(:millisecond)
 
   # The offset is derived from the identity alone, so each caller has its own
   # rotation phase and the whole population does not re-roll at the same instant.
@@ -211,9 +224,15 @@ defmodule PhoenixFlags.Variant do
 
   defp hash_point(parts), do: rem(hash_integer(parts), @resolution)
 
+  # Each part is length-prefixed rather than delimiter-joined. With a plain
+  # separator the parts can be re-partitioned: key "exp:org" + identity "123"
+  # and key "exp" + identity "org:123" would join to the same string and so
+  # collide completely, aliasing two experiments together. Composite identities
+  # like "org:123" are common enough that this is not theoretical.
   defp hash_integer(parts) do
-    <<integer::unsigned-integer-size(64), _rest::binary>> =
-      :crypto.hash(:sha256, Enum.join(parts, ":"))
+    payload = Enum.map_join(parts, "", fn part -> "#{byte_size(part)}:#{part}" end)
+
+    <<integer::unsigned-integer-size(64), _rest::binary>> = :crypto.hash(:sha256, payload)
 
     integer
   end
@@ -295,14 +314,25 @@ defmodule PhoenixFlags.Variant do
   defp validate_names(_weights, nil), do: :ok
 
   defp validate_names(weights, declared) do
-    case Enum.map(weights, &elem(&1, 0)) -- declared do
-      [] ->
+    given = Enum.map(weights, &elem(&1, 0))
+
+    case {given -- declared, declared -- given} do
+      {[], []} ->
         :ok
 
-      unknown ->
+      {unknown, _missing} when unknown != [] ->
         {:error,
          "unknown variant(s) #{Enum.join(unknown, ", ")}; " <>
            "declared: #{Enum.join(declared, ", ")}"}
+
+      {[], missing} ->
+        # A subset would be accepted on write and then reset on the next
+        # restart, because seeding reconciles the stored set against the
+        # declaration. Requiring every name keeps writes durable; use a weight
+        # of 0 to switch a variant off.
+        {:error,
+         "missing variant(s) #{Enum.join(missing, ", ")}; " <>
+           "every declared variant must be given a weight (use 0 to disable one)"}
     end
   end
 
