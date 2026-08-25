@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The `mix run dev.exs` dashboard rendered but was completely inert.** Clicking
+  Edit or a toggle did nothing, with `window.LiveView is undefined` in the
+  console. The inline dev bundle wraps `phoenix.min.js` and
+  `phoenix_live_view.min.js` in an arrow function, and those are esbuild IIFEs of
+  the form `var LiveView = (() => {...})()` — so inside that wrapper they are
+  ordinary function-scoped locals, never globals. Reading them as
+  `window.LiveView` / `window.Phoenix` therefore yielded `undefined` and no
+  LiveSocket was ever constructed. Now references the local bindings, verified by
+  evaluating the served bundle under Node with a DOM shim: it constructs a
+  LiveSocket, where the previous bundle threw the exact reported error.
+
+  Dev tooling only — the packaged library is unaffected, and the dashboard's
+  server-side behaviour was always covered by the LiveView tests. But it means
+  manual browser checks of the dashboard were never actually exercising
+  interactivity.
+
+- `dev.exs` now asserts at load time that each bundled asset still begins with
+  the expected `var Phoenix=` / `var LiveView=` binding, so an upstream rename or
+  format change fails loudly instead of silently producing an inert page again.
+
+- `.formatter.exs` now includes `dev.exs` and `bench/`. They sat outside the
+  input globs, so `mix format --check-formatted` in CI never checked them.
+
+
 ## [0.7.1] - 2026-08-25
 
 Bug fixes from a review of the 0.7.0 A/B feature, plus two crash paths that

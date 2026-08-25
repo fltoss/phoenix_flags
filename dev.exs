@@ -150,13 +150,35 @@ defmodule PhoenixFlags.DevAppJs do
            Path.join(:code.priv_dir(:phoenix_live_view), "static/phoenix_live_view.min.js")
          )
 
+  # The bundle below depends on these being esbuild IIFEs that bind a specific
+  # name. If an upstream release renames the global or changes format, fail here
+  # rather than shipping a dashboard that renders but never responds.
+  for {name, js} <- [{"Phoenix", @phoenix_js}, {"LiveView", @lv_js}] do
+    unless String.starts_with?(js, "var #{name}=") or String.starts_with?(js, "var #{name} =") do
+      raise """
+      dev.exs expected the bundled asset to begin with `var #{name}=`, but it starts with:
+
+          #{String.slice(js, 0, 80)}
+
+      The inline bundle in PhoenixFlags.DevAppJs relies on that binding.
+      Update it to match however the dependency now exposes its entry point.
+      """
+    end
+  end
+
+  # Both bundles are esbuild IIFEs of the form `var Phoenix = (() => {...})()`,
+  # so inside this wrapper arrow function those are ordinary function-scoped
+  # locals -- NOT globals. Referencing them as `window.Phoenix` / `window.LiveView`
+  # therefore reads undefined and no LiveSocket is ever created, which leaves the
+  # dashboard rendered but completely inert.
   @bundle """
   (() => {
   #{@phoenix_js}
   #{@lv_js}
   let csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content");
-  let liveSocket = new window.LiveView.LiveSocket("/live", window.Phoenix.Socket, {params: {_csrf_token: csrfToken}});
+  let liveSocket = new LiveView.LiveSocket("/live", Phoenix.Socket, {params: {_csrf_token: csrfToken}});
   liveSocket.connect();
+  window.liveSocket = liveSocket;
   })();
   """
 
