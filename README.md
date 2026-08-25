@@ -27,7 +27,9 @@ checks, and a simple API for building admin UIs. One dependency, no external ser
 ## Features
 
 - **Zero-cost reads** — `:persistent_term` cache, no process calls, no ETS copies
-- **Typed values** — boolean, integer, decimal, percentage, select, string
+- **Typed values** — boolean, integer, decimal, percentage, select, string, secret, variant
+- **A/B testing** — weighted variants assigned by a consistent hash of an identity,
+  editable at runtime for gradual rollouts
 - **Compile-time validation** — `flag/2` macro validates keys, types, and defaults at compile time
 - **Declarative flags** — define flags in code, auto-seeded on startup, stale flags auto-removed
 - **Cluster-aware** — writes notify all connected nodes immediately; a periodic
@@ -215,6 +217,7 @@ This means you never write seed migrations. Add a flag, deploy, done.
 | Percentage | `:percentage` | `"50"` | `Decimal.new("50")` | 0..100 |
 | Select | `:select` | `"ses"` | `"ses"` | must be one of the declared `:options` |
 | Secret | `:secret` | ciphertext | `"plaintext"` | none (see [Secrets](#secrets)) |
+| Variant | `:variant` | `"a=50,b=50"` | `%Variant{}` | weights total 100, declared (see [A/B Testing](#ab-testing)) |
 
 All values are stored as strings. Casting happens once when the cache is loaded,
 not on every read.
@@ -293,6 +296,106 @@ raises a `PhoenixFlags.Error` at compile time; misconfiguring it (module missing
   treat it with the same care as an env var.
 - `all_grouped/0` returns entries with the stored ciphertext in `entry.value`
   — safe to render in bulk without special handling.
+
+## A/B Testing
+
+A `:variant` flag resolves to a *different* value per caller, chosen by a
+consistent hash of an identity you supply. The same identity always gets the
+same variant — on every node, across restarts and deploys — so a user sees a
+stable experience and the results stay analysable.
+
+```elixir
+defmodule MyApp.SystemConfig do
+  use PhoenixFlags, otp_app: :my_app, repo: MyApp.Repo
+
+  flag "checkout_flow",
+    type: :variant,
+    category: "experiments",
+    label: "Checkout flow experiment",
+    variants: [
+      {"Control",  "control",  90},
+      {"New flow", "new_flow", 10}
+    ]
+end
+```
+
+```elixir
+MyApp.SystemConfig.variant("checkout_flow", user.id)
+#=> "control"
+
+MyApp.SystemConfig.variant("checkout_flow", user.id)
+#=> "control"   # always, for this user
+
+MyApp.SystemConfig.get("checkout_flow")
+#=> ** (PhoenixFlags.Error) "checkout_flow" is a :variant flag and has no single
+#     value. Read it with variant("checkout_flow", identity) instead of get/2.
+```
+
+Weights are whole numbers that must total 100. They are stored as the flag's
+value (`"control=90,new_flow=10"`) and so can be changed at runtime from the
+dashboard — a rollout goes 5% → 15% → 40% → 100% with no deploy.
+
+### Gradual rollouts are sticky
+
+Buckets are cumulative in declaration order, so growing a variant at the expense
+of the *next* one moves only the boundary between them. Going from
+`control=90,new_flow=10` to `control=80,new_flow=20` moves the 80–90 band and
+leaves everyone else exactly where they were — nobody already seeing `new_flow`
+is moved back to `control`.
+
+That property does **not** survive reordering the `:variants` declaration,
+changing `:seed`, or a `:ttl` rollover. Any of those reshuffles the population.
+
+### Assignment lifetime (`:ttl`)
+
+By default an assignment is permanent. Set `:ttl` in milliseconds to re-roll each
+caller once per window:
+
+```elixir
+flag "banner_copy",
+  type: :variant,
+  ttl: :timer.hours(24),      # nil (default) = never expires
+  variants: [{"A", "a", 50}, {"B", "b", 50}]
+```
+
+Windows are offset per identity, so the population does not all flip at the same
+instant. This is stateless — no rows are stored and no database call is made; the
+window is simply folded into the hash.
+
+### Independence and seeds
+
+The flag key is part of the hash input, so two concurrent experiments do not
+correlate: a user in `control` for one is not systematically in `control` for the
+other. Pass `seed: "some-string"` to re-randomise everyone — useful when
+restarting an experiment on the same flag.
+
+Assignment uses SHA-256 rather than `:erlang.phash2/2`, which is not guaranteed
+stable across OTP major versions; an OTP upgrade must not silently reshuffle a
+running experiment.
+
+### Tracking exposures
+
+`variant/3` emits nothing by default, to keep the read path free. Pass
+`telemetry: true` to emit `[:phoenix_flags, :variant, :assigned]`:
+
+```elixir
+:telemetry.attach("ab-exposures", [:phoenix_flags, :variant, :assigned], fn _e, _m, meta, _c ->
+  MyApp.Analytics.track(meta.identity, meta.flag, meta.variant)
+end, nil)
+
+MyApp.SystemConfig.variant("checkout_flow", user.id, telemetry: true)
+```
+
+### Testing
+
+```elixir
+MyApp.SystemConfig.Test.stub("checkout_flow", "new_flow")
+# every identity now resolves to "new_flow"
+```
+
+A missing identity would put every caller in the same bucket, so `variant/3`
+raises on `nil` (or anything that is not a non-empty string or an integer)
+rather than bucketing silently.
 
 ## Architecture
 
@@ -574,7 +677,8 @@ MyApp.SystemConfig.update_entry("enable_benefits", %{"value" => "true"},
 | | Application env | FunWithFlags | PhoenixFlags |
 |---|---|---|---|
 | Runtime changes | No (deploy required) | Yes | Yes |
-| Typed values | No | Boolean only | 7 types + validation |
+| Typed values | No | Boolean only | 8 types + validation |
+| A/B testing | No | No | Weighted variants, consistent hash |
 | Caching | N/A (in-memory) | ETS | `:persistent_term` (zero-copy) |
 | Cluster sync | No | Redis/Ecto polling | Direct node messaging |
 | Admin UI | N/A | No | Built-in dashboard, one router line |
@@ -593,6 +697,8 @@ MyApp.SystemConfig.update_entry("enable_benefits", %{"value" => "true"},
 | `all_grouped()` | All entries grouped by category (for admin UI) |
 | `flags()` | List of declared `PhoenixFlags.Flag` structs |
 | `select_options(key)` | `{label, value}` options for a `:select` flag, or `[]` |
+| `variant(key, identity, opts \\ [])` | Variant assigned to `identity`. Accepts `:default`, `:telemetry`. |
+| `variants(key)` | Declared `{label, value, weight}` variants for a `:variant` flag, or `[]` |
 | `audit_log()` | All audit entries, newest first (requires `audit: true`) |
 | `audit_log(key)` | Audit entries for a specific key, newest first |
 

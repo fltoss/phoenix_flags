@@ -1,7 +1,7 @@
 defmodule PhoenixFlags.MixProject do
   use Mix.Project
 
-  @version "0.6.2"
+  @version "0.7.0"
   @source_url "https://github.com/fltoss/phoenix_flags"
 
   def project do
@@ -34,6 +34,7 @@ defmodule PhoenixFlags.MixProject do
     [
       {:ecto_sql, "~> 3.10"},
       {:decimal, "~> 2.4 or ~> 3.0"},
+      {:telemetry, "~> 0.4 or ~> 1.0"},
       {:jason, "~> 1.4", optional: true},
       {:phoenix, "~> 1.7", optional: true},
       {:phoenix_html, "~> 4.0", optional: true},

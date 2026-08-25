@@ -29,10 +29,31 @@ defmodule PhoenixFlags.Flag do
   - `:label` — display name (defaults to the key)
   - `:description` — help text for the admin UI
   - `:options` — for `:select` type, a list of `{label, value}` tuples (e.g. `[{"Mailjet", "mailjet"}]`)
+  - `:variants` (required for `:variant`) — a list of `{label, value, weight}` tuples whose
+    weights are whole numbers totalling 100 (e.g. `[{"Control", "control", 90}, {"New", "new", 10}]`).
+    The declared weights become the flag's initial stored value and can then be changed at
+    runtime from the dashboard.
+  - `:ttl` — for `:variant`, how long an assignment lasts in milliseconds. `nil` (the default)
+    means an assignment is permanent. A value re-rolls each caller once per window.
+  - `:seed` — for `:variant`, an explicit hash seed. Without one the split is local to this
+    flag, so concurrent experiments do not correlate. Changing it re-randomises everyone.
+
+  See `PhoenixFlags.Variant` for how assignment works.
   """
 
   @enforce_keys [:key, :type]
-  defstruct [:key, :type, :description, :options, default: "", category: "default", label: nil]
+  defstruct [
+    :key,
+    :type,
+    :description,
+    :options,
+    :variants,
+    :ttl,
+    :seed,
+    default: "",
+    category: "default",
+    label: nil
+  ]
 
   @valid_types PhoenixFlags.Type.valid_types()
 
@@ -43,7 +64,10 @@ defmodule PhoenixFlags.Flag do
           category: String.t(),
           label: String.t() | nil,
           description: String.t() | nil,
-          options: [{String.t(), String.t()}] | nil
+          options: [{String.t(), String.t()}] | nil,
+          variants: [{String.t(), String.t(), non_neg_integer()}] | nil,
+          ttl: pos_integer() | nil,
+          seed: String.t() | nil
         }
 
   @doc """
@@ -63,10 +87,22 @@ defmodule PhoenixFlags.Flag do
     validate_key!(flag.key)
     validate_type!(flag.type)
     validate_options!(flag.type, flag.options)
+    validate_variants!(flag.type, flag.variants)
+    validate_ttl!(flag.ttl)
+    validate_seed!(flag.seed)
     validate_default!(flag.type, flag.default, flag.options)
 
     flag
   end
+
+  @doc """
+  Returns the `{name, weight}` pairs declared for a `:variant` flag, or `[]`.
+  """
+  def weights(%__MODULE__{type: :variant, variants: variants}) when is_list(variants) do
+    Enum.map(variants, fn {_label, value, weight} -> {value, weight} end)
+  end
+
+  def weights(%__MODULE__{}), do: []
 
   defp validate_key!(key) when is_binary(key) and byte_size(key) > 0, do: :ok
 
@@ -96,6 +132,72 @@ defmodule PhoenixFlags.Flag do
 
   defp validate_options!(_type, _options), do: :ok
 
+  defp validate_variants!(:variant, nil) do
+    raise PhoenixFlags.Error,
+          "PhoenixFlags.Flag :variants is required for :variant type " <>
+            "(e.g. variants: [{\"Control\", \"control\", 50}, {\"New\", \"new\", 50}])"
+  end
+
+  defp validate_variants!(:variant, variants) when is_list(variants) do
+    unless variants != [] and
+             Enum.all?(
+               variants,
+               &match?(
+                 {label, value, weight}
+                 when is_binary(label) and is_binary(value) and
+                        is_integer(weight) and weight >= 0,
+                 &1
+               )
+             ) do
+      raise PhoenixFlags.Error,
+            "PhoenixFlags.Flag :variants must be a non-empty list of " <>
+              "{label, value, weight} tuples with non-negative integer weights, " <>
+              "got: #{inspect(variants)}"
+    end
+
+    # Reuse the runtime parser so a declaration and a dashboard edit can never
+    # disagree about what a valid split is.
+    weights = Enum.map(variants, fn {_label, value, weight} -> {value, weight} end)
+
+    case PhoenixFlags.Variant.parse(PhoenixFlags.Variant.serialize(weights)) do
+      {:ok, _variant} ->
+        :ok
+
+      {:error, message} ->
+        raise PhoenixFlags.Error, "PhoenixFlags.Flag :variants #{message}"
+    end
+  end
+
+  defp validate_variants!(_type, nil), do: :ok
+
+  defp validate_variants!(type, _variants) do
+    raise PhoenixFlags.Error,
+          "PhoenixFlags.Flag :variants is only valid for :variant type, got type: :#{type}"
+  end
+
+  # Mirrors PhoenixFlags.Config.validate_refresh_interval!/1 — nil (infinite) or
+  # a positive number of milliseconds.
+  defp validate_ttl!(nil), do: :ok
+  defp validate_ttl!(ttl) when is_integer(ttl) and ttl > 0, do: :ok
+
+  defp validate_ttl!(ttl) do
+    raise PhoenixFlags.Error,
+          "PhoenixFlags.Flag :ttl must be a positive integer (milliseconds) or nil " <>
+            "for an assignment that never expires, got: #{inspect(ttl)}"
+  end
+
+  defp validate_seed!(nil), do: :ok
+  defp validate_seed!(seed) when is_binary(seed) and seed != "", do: :ok
+
+  defp validate_seed!(seed) do
+    raise PhoenixFlags.Error,
+          "PhoenixFlags.Flag :seed must be a non-empty string or nil, got: #{inspect(seed)}"
+  end
+
+  # A :variant flag's stored value is its weights, built by to_seed_map/1, so
+  # :default plays no part and must not be required.
+  defp validate_default!(:variant, _value, _options), do: :ok
+
   defp validate_default!(type, "", _options) when type in [:integer, :decimal, :percentage] do
     raise PhoenixFlags.Error,
           "PhoenixFlags.Flag :default is required for :#{type} flags (e.g. default: \"0\")"
@@ -122,6 +224,17 @@ defmodule PhoenixFlags.Flag do
   end
 
   @doc false
+  def to_seed_map(%__MODULE__{type: :variant} = flag) do
+    %{
+      key: flag.key,
+      type: "variant",
+      value: PhoenixFlags.Variant.serialize(weights(flag)),
+      category: flag.category,
+      label: flag.label || flag.key,
+      description: flag.description
+    }
+  end
+
   def to_seed_map(%__MODULE__{} = flag) do
     %{
       key: flag.key,

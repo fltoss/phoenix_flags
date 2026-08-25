@@ -93,6 +93,23 @@ defmodule PhoenixFlags.DevConfig do
     options: [{"Basic", "basic"}, {"Pro", "pro"}, {"Enterprise", "enterprise"}]
   )
 
+  flag("checkout_flow",
+    type: :variant,
+    category: "experiments",
+    label: "Checkout Flow Experiment",
+    description: "Which checkout implementation a given user sees.",
+    variants: [{"Control", "control", 90}, {"New flow", "new_flow", 10}]
+  )
+
+  flag("banner_copy",
+    type: :variant,
+    category: "experiments",
+    label: "Banner Copy (24h TTL)",
+    description: "Re-rolled once a day per visitor.",
+    ttl: :timer.hours(24),
+    variants: [{"Friendly", "friendly", 34}, {"Direct", "direct", 33}, {"Urgent", "urgent", 33}]
+  )
+
   flag("discount_pct",
     type: :percentage,
     default: "0",
@@ -129,7 +146,9 @@ defmodule PhoenixFlags.DevAppJs do
 
   # Build a minimal JS bundle from Phoenix + LiveView deps
   @phoenix_js File.read!(Path.join(:code.priv_dir(:phoenix), "static/phoenix.min.js"))
-  @lv_js File.read!(Path.join(:code.priv_dir(:phoenix_live_view), "static/phoenix_live_view.min.js"))
+  @lv_js File.read!(
+           Path.join(:code.priv_dir(:phoenix_live_view), "static/phoenix_live_view.min.js")
+         )
 
   @bundle """
   (() => {
@@ -169,6 +188,7 @@ defmodule PhoenixFlags.DevEndpoint do
   )
 
   plug(:match_dev_js)
+
   plug(Plug.Parsers,
     parsers: [:urlencoded, :multipart, :json],
     pass: ["*/*"],

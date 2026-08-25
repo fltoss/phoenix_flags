@@ -33,6 +33,38 @@ children = [
 
 Reads are zero-copy from `:persistent_term` — no GenServer calls, no ETS lookups.
 
+## A/B testing (`:variant` flags)
+
+A `:variant` flag has no single value — it resolves per caller. Declare weighted
+variants that total 100:
+
+```elixir
+flag "checkout_flow",
+  type: :variant,
+  category: "experiments",
+  label: "Checkout flow",
+  ttl: nil,                    # nil (default) = assignment never expires
+  variants: [{"Control", "control", 90}, {"New flow", "new_flow", 10}]
+```
+
+- `MyApp.SystemConfig.variant("checkout_flow", user.id)` — the variant for that identity
+- `MyApp.SystemConfig.variant("key", id, default: "control")` — fallback if the flag is missing
+- `MyApp.SystemConfig.variant("key", id, telemetry: true)` — also emit `[:phoenix_flags, :variant, :assigned]`
+- `MyApp.SystemConfig.variants("key")` — the declared `{label, value, weight}` list
+
+Rules:
+
+- Use `variant/3`, **not** `get/2` — `get/2` raises for a `:variant` flag.
+- The identity must be a non-empty string or an integer. `nil` raises, because it
+  would put every caller in the same bucket.
+- Assignment is deterministic: same identity + same split = same variant, on
+  every node and across restarts.
+- Change the split at runtime (dashboard or `update_entry/3`) with a
+  `"name=weight,..."` string whose weights total 100. Growing a variant at the
+  expense of the next one does not move anyone already in it.
+- Set `ttl:` in milliseconds to re-roll each caller once per window; windows are
+  staggered per identity. Stateless — no rows stored, no database call.
+
 ## Updating config values
 
 - `MyApp.SystemConfig.update_entry("key", %{value: "new_value"})` — updates the database and refreshes the cache across the cluster
@@ -41,8 +73,11 @@ Reads are zero-copy from `:persistent_term` — no GenServer calls, no ETS looku
 
 In test environment, a `Test` submodule is automatically generated:
 
-- `MyApp.SystemConfig.Test.put_override("key", value)` — process-scoped override, safe for `async: true` tests
+- `MyApp.SystemConfig.Test.stub("key", value)` — process-scoped override, safe for `async: true` tests. For a `:variant` flag, pass the variant name to force it for every identity.
 - `MyApp.SystemConfig.Test.insert_entry("key", value)` — writes to the database, use for LiveView/integration tests where the config is read in a different process
+
+Stubs are only consulted when `cache_enabled: false`, which is the intended test
+configuration.
 
 ## Database migration
 
@@ -60,5 +95,7 @@ end
 ## Architecture notes
 
 - Storage is in the `system_flags` PostgreSQL table (source of truth)
-- Cache is a single `:persistent_term` key holding a `%{key => value}` map
+- Cache is a single `:persistent_term` key holding a `%{key => value}` map; a
+  `:variant` flag's value is a pre-parsed `%PhoenixFlags.Variant{}`, so
+  assignment is a hash and a short list walk with no parsing per read
 - Cluster sync happens via direct `Node.list()` messaging — no PubSub dependency required

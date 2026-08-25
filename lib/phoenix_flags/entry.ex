@@ -15,6 +15,10 @@ defmodule PhoenixFlags.Entry do
   | `percentage` | `"50"`          | `Decimal.new("50")`  | 0..100                        |
   | `select`     | `"ses"`         | `"ses"`              | must be a declared option     |
   | `secret`     | ciphertext      | decrypted plaintext  | none (encrypted at rest)      |
+  | `variant`    | `"a=50,b=50"`   | `%Variant{}`         | weights total 100, declared   |
+
+  A `variant` entry holds a *split*, not a single value, and is read with
+  `variant/2` rather than `get/2`. See `PhoenixFlags.Variant`.
   """
 
   use Ecto.Schema
@@ -48,6 +52,9 @@ defmodule PhoenixFlags.Entry do
       flag. When given, the new value must be one of them. Callers that do not
       have the declaration at hand (e.g. building an empty form) can omit it,
       in which case no membership check runs.
+    * `:variants` — the declared variant names for a `:variant` flag. When given,
+      every name in the submitted weights must be one of them. Same omission
+      rule as `:select_options`.
   """
   def changeset(entry, attrs, opts \\ []) do
     secret? = entry.type == "secret"
@@ -58,6 +65,7 @@ defmodule PhoenixFlags.Entry do
     |> maybe_validate_required(secret?)
     |> validate_by_type()
     |> validate_select_option(Keyword.get(opts, :select_options, []))
+    |> validate_variant_names(Keyword.get(opts, :variants, []))
   end
 
   defp maybe_validate_required(changeset, true = _secret?), do: changeset
@@ -74,6 +82,25 @@ defmodule PhoenixFlags.Entry do
         :ok -> changeset
         {:error, message} -> add_error(changeset, :value, message)
       end
+    end
+  end
+
+  # Same reasoning as validate_select_option/2 below: `Type.validate_value/2`
+  # checks that the weights parse and total 100, but only the declaration knows
+  # which names exist. Without this, a forged submit could introduce a variant
+  # name no code branch handles.
+  defp validate_variant_names(changeset, []), do: changeset
+
+  defp validate_variant_names(changeset, declared) do
+    value = get_field(changeset, :value)
+
+    if get_field(changeset, :type) == "variant" and is_binary(value) do
+      case PhoenixFlags.Variant.parse(value, names: declared) do
+        {:ok, _variant} -> changeset
+        {:error, message} -> add_error(changeset, :value, message)
+      end
+    else
+      changeset
     end
   end
 
@@ -137,6 +164,20 @@ defmodule PhoenixFlags.Entry do
 
       _ ->
         Logger.warning("PhoenixFlags: failed to cast #{inspect(value)} as #{type}")
+        nil
+    end
+  end
+
+  # Parsed once when the cache loads, so `variant/2` only has to hash and walk a
+  # short list. ttl/seed come from the declaration and are filled in by the
+  # Server, which is the only caller that has it.
+  def cast_value(value, "variant") do
+    case PhoenixFlags.Variant.parse(value) do
+      {:ok, variant} ->
+        variant
+
+      {:error, message} ->
+        Logger.warning("PhoenixFlags: failed to cast #{inspect(value)} as variant: #{message}")
         nil
     end
   end

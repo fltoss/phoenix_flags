@@ -428,3 +428,96 @@
   color: var(--pf-text-muted);
   font-size: 14px;
 }
+
+/* ------------------------------------------------------------------ */
+/* Variant (A/B) splits                                               */
+/* ------------------------------------------------------------------ */
+.pf-variant-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 200px;
+}
+
+.pf-variant-bar-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.pf-variant-bar-label {
+  color: var(--pf-text-secondary);
+  min-width: 84px;
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pf-variant-bar {
+  display: block;
+  flex: 1;
+  min-width: 60px;
+  height: 8px;
+  background: var(--pf-bg-muted);
+  border-radius: var(--pf-radius-sm);
+  overflow: hidden;
+}
+
+.pf-variant-bar-fill {
+  display: block;
+  height: 100%;
+  background: var(--pf-primary);
+  border-radius: var(--pf-radius-sm);
+}
+
+.pf-variant-bar-pct {
+  color: var(--pf-text);
+  font-variant-numeric: tabular-nums;
+  min-width: 38px;
+  text-align: right;
+}
+
+.pf-variant-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.pf-variant-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.pf-variant-name {
+  color: var(--pf-text-secondary);
+  font-size: 13px;
+  min-width: 120px;
+}
+
+.pf-variant-input {
+  width: 88px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.pf-variant-pct {
+  color: var(--pf-text-muted);
+  font-size: 13px;
+}
+
+.pf-variant-total {
+  margin: 0;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.pf-variant-total-ok {
+  color: var(--pf-success);
+}
+
+.pf-variant-total-bad {
+  color: var(--pf-error);
+}

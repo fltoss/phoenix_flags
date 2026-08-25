@@ -32,19 +32,34 @@ defmodule PhoenixFlags.Server do
 
   When `cache_enabled: false`, checks the process dictionary first
   (for test overrides), then falls back to a direct DB read.
+
+  Raises for a `:variant` flag: it holds a split rather than a single value, and
+  returning the struct would leak it into application code. Use `variant/4`.
   """
   def get(instance, key, default \\ nil) do
     case safe_get_config(instance) do
       {:ok, %{cache_enabled: true}} ->
-        instance |> read_cached_values() |> Map.get(key, default)
+        instance |> read_cached_values() |> Map.get(key, default) |> reject_variant(key)
 
       {:ok, config} ->
-        get_uncached(config, instance, key, default)
+        config |> get_uncached(instance, key, default) |> reject_variant(key)
 
       :error ->
         default
     end
   end
+
+  # A :variant flag holds a split, not a value, so reading it with get/3 is
+  # always a mistake. Benchmarked at ~0ns against the bare read (25ns median
+  # either way), so this is guarded here — one place, covering every caller —
+  # rather than in per-key clauses generated into each config module.
+  defp reject_variant(%PhoenixFlags.Variant{}, key) do
+    raise PhoenixFlags.Error,
+          "#{inspect(key)} is a :variant flag and has no single value. " <>
+            "Read it with variant(#{inspect(key)}, identity) instead of get/2."
+  end
+
+  defp reject_variant(value, _key), do: value
 
   defp get_uncached(config, instance, key, default) do
     case PhoenixFlags.Testing.get_stub(instance, key) do
@@ -57,6 +72,82 @@ defmodule PhoenixFlags.Server do
   # raising, so no rescue is needed here — unlike the `get/1` calls in
   # `get_config/1` and `safe_get_config/1`.
   defp read_persistent_term(key, default), do: :persistent_term.get(key, default)
+
+  @doc """
+  Returns the variant assigned to `identity` for a `:variant` flag.
+
+  Deterministic for a given identity, split and seed — see `PhoenixFlags.Variant`.
+  Does no database or process work: the split is parsed once when the cache
+  loads, so this is a `:persistent_term` read, a hash and a short list walk.
+
+  ## Options
+
+    * `:default` — returned when the flag does not exist, is not a `:variant`
+      flag, or the instance is not running. Defaults to `nil`.
+    * `:telemetry` — when `true`, emits `[:phoenix_flags, :variant, :assigned]`
+      with `%{flag: key, identity: identity, variant: variant, instance: instance}`
+      as metadata, so exposures can be piped into your own analytics. Off by
+      default to keep the read path free.
+    * `:now` — current time in milliseconds, for testing TTL rollover.
+  """
+  def variant(instance, key, identity, opts \\ []) do
+    default = Keyword.get(opts, :default)
+
+    case resolve_variant(instance, key, identity, opts) do
+      nil -> default
+      assigned -> maybe_emit_assigned(assigned, instance, key, identity, opts)
+    end
+  end
+
+  defp resolve_variant(instance, key, identity, opts) do
+    case safe_get_config(instance) do
+      {:ok, %{cache_enabled: true}} ->
+        instance |> read_cached_values() |> Map.get(key) |> assign_variant(key, identity, opts)
+
+      {:ok, config} ->
+        # Mirrors get/3: a stub wins over the database in uncached (test) mode,
+        # and it names a variant directly rather than a split to assign from.
+        case PhoenixFlags.Testing.get_stub(instance, key) do
+          {:ok, stubbed} -> stubbed
+          :none -> config |> variant_from_db(key) |> assign_variant(key, identity, opts)
+        end
+
+      :error ->
+        nil
+    end
+  end
+
+  defp assign_variant(%PhoenixFlags.Variant{} = variant, key, identity, opts) do
+    PhoenixFlags.Variant.assign(variant, key, identity, opts)
+  end
+
+  defp assign_variant(_other, _key, _identity, _opts), do: nil
+
+  defp variant_from_db(%Config{} = config, key) do
+    case config.repo.get_by(Entry, key: key) do
+      %Entry{type: "variant"} = entry -> decrypted_cast_value(entry, config)
+      _ -> nil
+    end
+  rescue
+    DBConnection.OwnershipError ->
+      nil
+
+    error ->
+      Logger.warning("PhoenixFlags: variant read failed for #{key}: #{inspect(error)}")
+      nil
+  end
+
+  defp maybe_emit_assigned(assigned, instance, key, identity, opts) do
+    if Keyword.get(opts, :telemetry, false) do
+      :telemetry.execute(
+        [:phoenix_flags, :variant, :assigned],
+        %{},
+        %{instance: instance, flag: key, identity: identity, variant: assigned}
+      )
+    end
+
+    assigned
+  end
 
   @doc """
   Updates a config entry and refreshes the cache.
@@ -102,7 +193,10 @@ defmodule PhoenixFlags.Server do
   defp value_changeset(%Config{} = config, %Entry{} = entry, attrs) do
     attrs = maybe_encrypt(attrs, entry.type, config)
 
-    Entry.changeset(entry, attrs, select_options: select_options(config, entry.key))
+    Entry.changeset(entry, attrs,
+      select_options: select_options(config, entry.key),
+      variants: variant_names(config, entry.key)
+    )
   end
 
   # A module built by `use PhoenixFlags` always generates `select_options/1`,
@@ -117,6 +211,25 @@ defmodule PhoenixFlags.Server do
       name.select_options(key)
     else
       []
+    end
+  end
+
+  # Same guard and same reason as select_options/2 above.
+  defp variant_names(%Config{} = config, key) do
+    case declared_variant(config, key) do
+      %PhoenixFlags.Flag{} = flag -> Enum.map(PhoenixFlags.Flag.weights(flag), &elem(&1, 0))
+      nil -> []
+    end
+  end
+
+  defp declared_variant(%Config{name: name}, key) do
+    Code.ensure_loaded?(name)
+
+    if function_exported?(name, :flags, 0) do
+      Enum.find(name.flags(), fn
+        %PhoenixFlags.Flag{key: ^key, type: :variant} -> true
+        _ -> false
+      end)
     end
   end
 
@@ -522,6 +635,21 @@ defmodule PhoenixFlags.Server do
     error ->
       Logger.warning("PhoenixFlags: failed to decrypt secret #{key}: #{inspect(error)}")
       nil
+  end
+
+  # ttl and seed are declaration-level, so they are applied here rather than in
+  # Entry.cast_value/2, which only sees the stored string.
+  defp decrypted_cast_value(%Entry{type: "variant", value: value, key: key}, %Config{} = config) do
+    case Entry.cast_value(value, "variant") do
+      %PhoenixFlags.Variant{} = variant ->
+        case declared_variant(config, key) do
+          %PhoenixFlags.Flag{ttl: ttl, seed: seed} -> %{variant | ttl: ttl, seed: seed}
+          nil -> variant
+        end
+
+      nil ->
+        nil
+    end
   end
 
   defp decrypted_cast_value(%Entry{value: value, type: type}, _config) do

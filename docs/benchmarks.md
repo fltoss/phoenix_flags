@@ -12,7 +12,7 @@ mix run bench/phoenix_flags_bench.exs
 
 - Elixir 1.20.0-rc.3 / OTP 27
 - PostgreSQL (local)
-- 6 flags across 3 categories (boolean, integer, string, decimal, percentage, select)
+- 8 flags across 4 categories (boolean, integer, string, decimal, percentage, select, and two variant flags)
 
 ## I/O Profile
 
@@ -26,6 +26,8 @@ Each function's database and network call count per invocation:
 | `all_grouped/0` (uncached) | 1 | 0 | `SELECT` all entries |
 | `flags/0` | 0 | 0 | Compiled module attribute |
 | `select_options/1` | 0 | 0 | `flags/0` + list scan |
+| `variant/3` | 0 | 0 | `persistent_term.get` + SHA-256 + bucket walk |
+| `variants/1` | 0 | 0 | Compiled module attribute + list scan |
 | `update_entry/3` | 2 | N | `SELECT` by key + `UPDATE` (cache patched in-memory) |
 
 `update_entry/3` also sends a fire-and-forget `:reload` message to `Node.list()` peers (N = number of connected nodes). Each peer then performs 1 DB call (`SELECT` all) to reload its local cache.
@@ -76,6 +78,33 @@ Zero DB calls. Scans the `flags/0` list for a matching key.
 |---|---|---|---|---|---|
 | `select_options/1` (select) | 5.11 M | 196 ns | 145 ns | 342 ns | 120 B |
 | `select_options/1` (non-select) | 9.00 M | 111 ns | 63 ns | 152 ns | 120 B |
+
+### 4b. `variant/3` — A/B assignment
+
+Zero DB calls. The split is parsed once when the cache loads, so a call is a
+`:persistent_term` read, one SHA-256, and a walk of the cumulative bucket list.
+
+> Measured separately from the sections above, on Elixir 1.20.3 / OTP 29 on a
+> loaded development machine. Figures are rounded and should be read as orders
+> of magnitude — repeat runs varied by up to 3x on the same code, and Benchee
+> reports deviations above 1000% at this timescale. The call-count column in the
+> I/O profile above is the part that is exact.
+
+| Scenario | ips | median | notes |
+|---|---|---|---|
+| `variants/1` (declaration lookup) | ~5 M | ~0.16 us | compiled attribute + list scan |
+| `variant/3` (`ttl: nil`) | ~1.5 M | ~0.55 us | one SHA-256 |
+| `variant/3` (`ttl: 24h`) | ~1.0 M | ~0.90 us | a second hash for the per-identity offset, plus a clock read |
+| `variant/3` (`telemetry: true`) | ~0.8 M | ~0.90 us | adds `:telemetry.execute/3` |
+
+`variant/3` is roughly 5-7x the cost of `get/2`, which is the SHA-256. That is
+deliberate: `:erlang.phash2/2` would be cheaper but is not guaranteed stable
+across OTP major versions, and an OTP upgrade silently reshuffling every live
+experiment is a far worse outcome than ~0.5 us per assignment. At ~1.5 M
+assignments/sec it is not a bottleneck for request-path use.
+
+Setting `ttl:` roughly doubles the cost, so leave it `nil` (the default) unless
+you actually want assignments to expire.
 
 ### 5. `update_entry/3` (DB write + incremental cache patch)
 

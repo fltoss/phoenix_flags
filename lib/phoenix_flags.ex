@@ -84,6 +84,23 @@ defmodule PhoenixFlags do
           _ -> []
         end
       end
+
+      @doc """
+      Returns the declared `{label, value, weight}` variants for a `:variant`
+      flag, or `[]` if the key is not a variant flag.
+
+      These are the *declared* weights. The live split is whatever is stored in
+      the database, which the dashboard can change at runtime.
+      """
+      def variants(key) do
+        case Enum.find(flags(), &(&1.key == key)) do
+          %PhoenixFlags.Flag{type: :variant, variants: variants} when is_list(variants) ->
+            variants
+
+          _ ->
+            []
+        end
+      end
     end
   end
 
@@ -136,9 +153,29 @@ defmodule PhoenixFlags do
 
       @doc """
       Returns the cached value for a config key, cast to its native type.
+
+      Raises for a `:variant` flag, which holds a split rather than a single
+      value — use `variant/3` for those.
       """
       def get(key, default \\ nil) do
         PhoenixFlags.Server.get(__MODULE__, key, default)
+      end
+
+      @doc """
+      Returns the variant assigned to `identity` for a `:variant` flag.
+
+      Deterministic: the same identity always gets the same variant, on every
+      node and across restarts. Does no database or process work.
+
+          MyApp.SystemConfig.variant("checkout_flow", user.id)
+          #=> "new_flow"
+
+      Options: `:default` (when the flag is missing or not a variant flag),
+      `:telemetry` (emit an exposure event), `:now` (for testing TTL rollover).
+      See `PhoenixFlags.Server.variant/4` and `PhoenixFlags.Variant`.
+      """
+      def variant(key, identity, opts \\ []) do
+        PhoenixFlags.Server.variant(__MODULE__, key, identity, opts)
       end
 
       @doc """

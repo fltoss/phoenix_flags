@@ -65,8 +65,30 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
     end
 
     @impl true
+    def handle_event("pf-validate", %{"key" => key, "entry" => entry_params}, socket) do
+      # Re-render the editor with the submitted weights so the running total and
+      # any error show up as the operator types. No write.
+      case find_entry(socket, key) do
+        %Entry{} = entry ->
+          changeset =
+            entry
+            |> Entry.changeset(variant_attrs(socket, key, entry_params),
+              variants: variant_names(socket, key)
+            )
+            |> Map.put(:action, :validate)
+
+          forms = Map.put(socket.assigns.forms, key, to_form(changeset, as: :entry))
+          {:noreply, assign(socket, :forms, forms)}
+
+        nil ->
+          {:noreply, socket}
+      end
+    end
+
+    @impl true
     def handle_event("pf-save", %{"key" => key, "entry" => entry_params}, socket) do
       config = socket.assigns.config_module
+      entry_params = variant_attrs(socket, key, entry_params)
 
       case config.update_entry(key, entry_params, actor: socket.assigns.actor) do
         {:ok, _entry} ->
@@ -103,11 +125,37 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
               form={@forms[entry.key]}
               editing={@editing_key == entry.key}
               select_options={@config_module.select_options(entry.key)}
+              variants={@config_module.variants(entry.key)}
             />
           </div>
         </div>
       </div>
       """
+    end
+
+    # A variant editor posts one field per variant, so fold them back into the
+    # stored "name=weight,..." string. Declared order is used, not the params map
+    # order, because bucket order is what makes a rollout sticky.
+    defp variant_attrs(socket, key, %{"variants" => submitted} = params) when is_map(submitted) do
+      case socket.assigns.config_module.variants(key) do
+        [] ->
+          params
+
+        declared ->
+          value =
+            Enum.map_join(declared, ",", fn {_label, name, _weight} ->
+              "#{name}=#{Map.get(submitted, name, "0")}"
+            end)
+
+          params |> Map.delete("variants") |> Map.put("value", value)
+      end
+    end
+
+    defp variant_attrs(_socket, _key, params), do: params
+
+    defp variant_names(socket, key) do
+      socket.assigns.config_module.variants(key)
+      |> Enum.map(fn {_label, name, _weight} -> name end)
     end
 
     defp find_entry(socket, key) do

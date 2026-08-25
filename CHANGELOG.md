@@ -7,6 +7,82 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-08-25
+
+### Added
+
+- **A/B testing via a new `:variant` flag type.** A `:variant` flag resolves to a
+  different value per caller, chosen by a consistent hash of an identity you
+  supply, so a given user sees a stable experience and results stay analysable.
+
+  ```elixir
+  flag "checkout_flow",
+    type: :variant,
+    category: "experiments",
+    label: "Checkout flow experiment",
+    ttl: nil,                    # nil (default) = assignment never expires
+    variants: [{"Control", "control", 90}, {"New flow", "new_flow", 10}]
+  ```
+
+  ```elixir
+  MyApp.SystemConfig.variant("checkout_flow", user.id)   #=> "control"
+  ```
+
+  Weights are whole numbers totalling 100, stored as the flag's value
+  (`"control=90,new_flow=10"`), so a rollout can go 5% → 15% → 40% → 100% from
+  the dashboard with no deploy. **No migration is required** — `system_flags.type`
+  is an unconstrained string column and `value` is already `text`.
+
+  Modelled on [AWS AppConfig traffic
+  splitting](https://docs.aws.amazon.com/appconfig/latest/userguide/appconfig-creating-multi-variant-feature-flags-rules.html),
+  with one deliberate difference. AppConfig evaluates each variant as an
+  independent `(split pct::N by::$id)` rule, first match wins over a shared hash,
+  which means two variants at `pct::20` produce `A: 20%, B: 0%` — a footgun their
+  own docs document. A single ordered weight table makes buckets disjoint by
+  construction and lets the total be validated.
+
+  Details:
+
+  - **Sticky rollouts.** Buckets are cumulative in declaration order, so growing
+    a variant at the expense of the next one moves only the boundary between
+    them. Verified over 20k identities: going `90/10` → `80/20` moves nobody out
+    of `new_flow`. Reordering `:variants`, changing `:seed`, or a `:ttl` rollover
+    all reshuffle the population, and the docs say so.
+  - **`ttl:`** (milliseconds, `nil` by default and meaning permanent) folds a time
+    window into the hash so each caller is re-rolled once per window. Windows are
+    offset per identity, so the population does not all flip at once. Stateless —
+    no rows stored, no database call.
+  - **Independence.** The flag key is part of the hash input, so concurrent
+    experiments do not correlate. `seed:` re-randomises everyone, for restarting
+    an experiment on the same flag.
+  - **SHA-256, not `:erlang.phash2/2`.** `phash2` is not guaranteed stable across
+    OTP major versions, and an OTP upgrade must not silently reshuffle a live
+    experiment. Costs ~0.5 us per assignment; see `docs/benchmarks.md`.
+  - **`get/2` raises** for a `:variant` flag, naming `variant/3`, rather than
+    leaking a `%PhoenixFlags.Variant{}` into application code. Benchmarked at no
+    measurable cost to ordinary reads.
+  - **A missing identity raises.** `nil` (or anything not a non-empty string or
+    integer) would put every caller in the same bucket, which is an invisible
+    bug, so it fails loudly.
+  - **Dashboard editor** with one input per variant and a live running total that
+    must reach 100.
+  - **Opt-in exposure events.** `variant/3` emits nothing by default; pass
+    `telemetry: true` for `[:phoenix_flags, :variant, :assigned]`. `:telemetry` is
+    now a declared dependency — it was previously only transitive.
+
+- `PhoenixFlags.Variant` — `parse/2`, `parse_weights/1`, `serialize/1`, `assign/4`.
+- Generated `variant/3` and `variants/1` on every config module.
+
+### Fixed
+
+- **`usage-rules.md` documented a function that does not exist.** It described
+  `Test.put_override/2`; the generated helper is `Test.stub/2`. Since
+  `usage-rules.md` ships in the package and is consumed by coding agents, this
+  was actively misleading.
+- Dashboard edit forms now carry an `id`, which LiveView needs for form recovery
+  after a reconnect. Previously it warned about this in tests.
+
+
 ### Changed
 
 - **Unexpected stored boolean values now warn instead of failing silently.**

@@ -13,6 +13,7 @@
 #   all_grouped/0      → 0 DB calls when cached, 1 SELECT ALL when uncached
 #   flags/0            → 0 DB calls (compiled module attribute)
 #   select_options/1   → 0 DB calls (compiled module attribute)
+#   variant/3          → 0 DB calls (persistent_term + SHA-256 + bucket walk)
 #   update_entry/3     → 2 DB calls (SELECT by key + UPDATE), cache patched in-memory
 #                        + N network sends (Node.list peer notification, fire-and-forget)
 
@@ -43,6 +44,21 @@ defmodule BenchConfig do
     category: "gamma",
     label: "Select Flag",
     options: [{"Option A", "a"}, {"Option B", "b"}]
+  )
+
+  flag("bench_var",
+    type: :variant,
+    category: "delta",
+    label: "Variant Flag",
+    variants: [{"Control", "control", 50}, {"Treatment", "treatment", 50}]
+  )
+
+  flag("bench_var_ttl",
+    type: :variant,
+    category: "delta",
+    label: "Variant Flag (24h TTL)",
+    ttl: :timer.hours(24),
+    variants: [{"Control", "control", 50}, {"Treatment", "treatment", 50}]
   )
 end
 
@@ -128,6 +144,24 @@ Benchee.run(
   print: [configuration: false]
 )
 
+IO.puts("\n--- 4b. variant/3 [0 DB calls, persistent_term + SHA-256 + bucket walk] ---\n")
+
+Benchee.run(
+  %{
+    "variant/3 (ttl: nil)" => fn -> BenchConfig.variant("bench_var", "user-12345") end,
+    "variant/3 (ttl: 24h)" => fn -> BenchConfig.variant("bench_var_ttl", "user-12345") end,
+    "variant/3 (integer identity)" => fn -> BenchConfig.variant("bench_var", 12_345) end,
+    "variant/3 (+ telemetry)" => fn ->
+      BenchConfig.variant("bench_var", "user-12345", telemetry: true)
+    end,
+    "variants/1 (declaration lookup)" => fn -> BenchConfig.variants("bench_var") end
+  },
+  time: 3,
+  warmup: 1,
+  memory_time: 1,
+  print: [configuration: false]
+)
+
 IO.puts("""
 \n--- 5. update_entry/3 [2 DB calls: SELECT + UPDATE, cache patched in-memory] ---
        [+ N network sends to Node.list() peers, fire-and-forget]
@@ -191,6 +225,21 @@ defmodule BenchConfigCached do
     category: "gamma",
     label: "Select Flag",
     options: [{"Option A", "a"}, {"Option B", "b"}]
+  )
+
+  flag("bench_var",
+    type: :variant,
+    category: "delta",
+    label: "Variant Flag",
+    variants: [{"Control", "control", 50}, {"Treatment", "treatment", 50}]
+  )
+
+  flag("bench_var_ttl",
+    type: :variant,
+    category: "delta",
+    label: "Variant Flag (24h TTL)",
+    ttl: :timer.hours(24),
+    variants: [{"Control", "control", 50}, {"Treatment", "treatment", 50}]
   )
 end
 

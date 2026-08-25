@@ -374,6 +374,132 @@ defmodule PhoenixFlags.UI.DashboardLiveTest do
     end
   end
 
+  describe "variant" do
+    setup do
+      config = %PhoenixFlags.Config{
+        otp_app: :phoenix_flags,
+        repo: TestRepo,
+        name: PhoenixFlags.TestVariantConfig,
+        cache_enabled: false
+      }
+
+      :persistent_term.put({PhoenixFlags, PhoenixFlags.TestVariantConfig, :config}, config)
+
+      TestRepo.insert!(%Entry{
+        key: "checkout_flow",
+        value: "control=90,new_flow=10",
+        type: "variant",
+        category: "experiments",
+        label: "Checkout flow"
+      })
+
+      :ok
+    end
+
+    test "shows the split as labelled bars rather than a raw value", %{conn: conn} do
+      {:ok, _view, html} = live(conn, "/variant-flags")
+
+      assert html =~ "Checkout flow"
+      assert html =~ "Control"
+      assert html =~ "New flow"
+      assert html =~ "90%"
+      assert html =~ "10%"
+      # The stored string itself must not be what an operator reads.
+      refute html =~ "control=90,new_flow=10"
+    end
+
+    test "the editor renders one input per declared variant, with a running total",
+         %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/variant-flags")
+
+      html =
+        view
+        |> element(~s(button[phx-value-key="checkout_flow"]))
+        |> render_click()
+
+      assert html =~ ~s(name="entry[variants][control]")
+      assert html =~ ~s(name="entry[variants][new_flow]")
+      assert html =~ "Total 100%"
+    end
+
+    test "saving a valid split writes it in declared order", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/variant-flags")
+
+      view |> element(~s(button[phx-value-key="checkout_flow"])) |> render_click()
+
+      view
+      |> element(~s(form[phx-value-key="checkout_flow"]))
+      |> render_submit(%{"entry" => %{"variants" => %{"new_flow" => "40", "control" => "60"}}})
+
+      # Declared order, not the order the params happened to arrive in — bucket
+      # order is what makes a rollout sticky.
+      assert TestRepo.get_by!(Entry, key: "checkout_flow").value == "control=60,new_flow=40"
+    end
+
+    test "a split that does not total 100 is rejected and shown as an error", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/variant-flags")
+
+      view |> element(~s(button[phx-value-key="checkout_flow"])) |> render_click()
+
+      html =
+        view
+        |> element(~s(form[phx-value-key="checkout_flow"]))
+        |> render_submit(%{"entry" => %{"variants" => %{"control" => "60", "new_flow" => "10"}}})
+
+      assert html =~ "weights must total 100, got 70"
+      assert TestRepo.get_by!(Entry, key: "checkout_flow").value == "control=90,new_flow=10"
+    end
+
+    test "a forged submit naming an undeclared variant is rejected", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/variant-flags")
+
+      view |> element(~s(button[phx-value-key="checkout_flow"])) |> render_click()
+
+      # variant_attrs/3 rebuilds the value from the *declared* variants, so a
+      # forged extra field cannot introduce a name; the missing declared one
+      # defaults to 0 and the total then fails.
+      html =
+        view
+        |> element(~s(form[phx-value-key="checkout_flow"]))
+        |> render_submit(%{"entry" => %{"variants" => %{"control" => "50", "bogus" => "50"}}})
+
+      assert html =~ "weights must total 100"
+      assert TestRepo.get_by!(Entry, key: "checkout_flow").value == "control=90,new_flow=10"
+    end
+
+    test "a forged value field is discarded in favour of the declared rebuild",
+         %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/variant-flags")
+
+      view |> element(~s(button[phx-value-key="checkout_flow"])) |> render_click()
+
+      # The form posts its own entry[variants][...] fields, so variant_attrs/3
+      # rebuilds `value` from the declared variants and drops anything the
+      # client tried to set directly. The stored split is therefore unchanged.
+      view
+      |> element(~s(form[phx-value-key="checkout_flow"]))
+      |> render_submit(%{"entry" => %{"value" => "control=50,bogus=50"}})
+
+      assert TestRepo.get_by!(Entry, key: "checkout_flow").value == "control=90,new_flow=10"
+    end
+
+    test "the running total updates live as weights change", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/variant-flags")
+
+      view |> element(~s(button[phx-value-key="checkout_flow"])) |> render_click()
+
+      html =
+        view
+        |> element(~s(form[phx-value-key="checkout_flow"]))
+        |> render_change(%{"entry" => %{"variants" => %{"control" => "70", "new_flow" => "10"}}})
+
+      assert html =~ "Total 80%"
+      assert html =~ "must be 100"
+      # A change event must not write.
+      assert TestRepo.get_by!(Entry, key: "checkout_flow").value == "control=90,new_flow=10"
+    end
+  end
+
   describe "secret" do
     test "shows 'Not set' for an empty secret", %{conn: conn} do
       TestRepo.insert!(%Entry{
