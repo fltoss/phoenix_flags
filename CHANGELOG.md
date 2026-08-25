@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-08-25
+
+### Changed
+
+- **Dependencies updated.** No library code changes; `mix.exs` constraints are unchanged (every bump is within the existing requirements).
+
+  | Package | From | To |
+  |---|---|---|
+  | `phoenix` | 1.8.9 | 1.8.12 |
+  | `phoenix_live_view` | 1.2.8 | 1.2.10 |
+  | `postgrex` | 0.22.3 | 0.22.4 |
+  | `ecto` | 3.14.1 | 3.14.2 |
+  | `req` (dev, via `igniter`) | 0.7.1 | 0.7.3 |
+  | `spitfire` (dev, via `igniter`) | 0.3.13 | 0.4.0 |
+
+### Security
+
+- Picks up **postgrex 0.22.4**, which escapes comments in `Postgrex.stream/4` ([CVE-2026-66838](https://github.com/elixir-ecto/postgrex/blob/master/CHANGELOG.md)). PhoenixFlags does not call `Postgrex.stream/4` itself, so this is a transitive hardening for host applications that do.
+- Picks up **phoenix_live_view 1.2.9**, which fixes an open redirect in `redirect/2` via ASCII tab, LF and CR ([CVE-2026-64941](https://github.com/phoenixframework/phoenix_live_view/security/advisories/GHSA-36m4-rm57-3prf)). The embedded dashboard performs no redirects or navigation of its own, so it was not exposed, but host applications on 1.2.8 should upgrade.
+- `mix hex.audit` reports no retired or advisory packages.
+
 ## [0.6.0] - 2026-07-30
 
 ### Upgrading

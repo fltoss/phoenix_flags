@@ -6,8 +6,60 @@ on:
   pull_request:
 
 jobs:
-  test:
+  lint:
+    name: Lint (Elixir 1.20 / OTP 28)
     runs-on: ubuntu-latest
+
+    env:
+      MIX_ENV: test
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: erlef/setup-beam@v1
+        with:
+          elixir-version: "1.20"
+          otp-version: "28"
+
+      - uses: actions/cache@v6
+        with:
+          path: |
+            deps
+            _build
+          key: lint-${{ runner.os }}-${{ hashFiles('mix.lock') }}
+          restore-keys: |
+            lint-${{ runner.os }}-
+
+      - run: mix deps.get
+
+      - run: mix format --check-formatted
+
+      - run: mix deps.unlock --check-unused
+
+      - run: mix compile --warnings-as-errors
+
+      - run: mix credo
+
+      - run: mix hex.audit
+
+      - name: Build docs
+        run: MIX_ENV=dev mix docs
+
+  test:
+    name: Test (Elixir ${{ matrix.elixir }} / OTP ${{ matrix.otp }})
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Oldest supported pair, matching the `elixir: "~> 1.16"` requirement.
+          - elixir: "1.16"
+            otp: "26"
+          - elixir: "1.18"
+            otp: "27"
+          - elixir: "1.20"
+            otp: "28"
 
     services:
       postgres:
@@ -30,22 +82,20 @@ jobs:
 
       - uses: erlef/setup-beam@v1
         with:
-          elixir-version: "1.20"
-          otp-version: "28"
+          elixir-version: ${{ matrix.elixir }}
+          otp-version: ${{ matrix.otp }}
 
       - uses: actions/cache@v6
         with:
           path: |
             deps
             _build
-          key: mix-${{ runner.os }}-${{ hashFiles('mix.lock') }}
+          key: mix-${{ runner.os }}-${{ matrix.elixir }}-${{ matrix.otp }}-${{ hashFiles('mix.lock') }}
           restore-keys: |
-            mix-${{ runner.os }}-
+            mix-${{ runner.os }}-${{ matrix.elixir }}-${{ matrix.otp }}-
 
       - run: mix deps.get
 
-      - run: mix format --check-formatted
-
-      - run: mix compile --warnings-as-errors
+      - run: mix compile
 
       - run: mix test
