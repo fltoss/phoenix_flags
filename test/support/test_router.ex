@@ -17,5 +17,9 @@ defmodule PhoenixFlags.TestRouter do
     pipe_through(:browser)
 
     flags_dashboard("/flags", config: PhoenixFlags.TestConfig)
+
+    # A second mount, so the dashboard tests can exercise a config module that
+    # actually declares a :select flag with options.
+    flags_dashboard("/select-flags", config: PhoenixFlags.TestSelectConfig)
   end
 end

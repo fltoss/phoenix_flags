@@ -287,7 +287,6 @@ defmodule PhoenixFlags.UI.DashboardLiveTest do
         |> element(~s(button[phx-value-key="email_provider"]))
         |> render_click()
 
-      # TestConfig declares select_options for this key
       assert html =~ "<select"
     end
 
@@ -304,6 +303,74 @@ defmodule PhoenixFlags.UI.DashboardLiveTest do
 
       # Should show the label, not the raw value
       assert html =~ "Email Provider"
+    end
+  end
+
+  describe "select validation (mounted with a config that declares options)" do
+    setup do
+      config = %PhoenixFlags.Config{
+        otp_app: :phoenix_flags,
+        repo: TestRepo,
+        name: PhoenixFlags.TestSelectConfig,
+        cache_enabled: false
+      }
+
+      :persistent_term.put({PhoenixFlags, PhoenixFlags.TestSelectConfig, :config}, config)
+
+      TestRepo.insert!(%Entry{
+        key: "email_provider",
+        value: "mailjet",
+        type: "select",
+        category: "email",
+        label: "Email Provider"
+      })
+
+      :ok
+    end
+
+    test "renders the declared options", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/select-flags")
+
+      html =
+        view
+        |> element(~s(button[phx-value-key="email_provider"]))
+        |> render_click()
+
+      assert html =~ ~s(value="mailjet")
+      assert html =~ ~s(value="ses")
+    end
+
+    test "saving a declared option succeeds", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/select-flags")
+
+      view
+      |> element(~s(button[phx-value-key="email_provider"]))
+      |> render_click()
+
+      view
+      |> element(~s(form[phx-value-key="email_provider"]))
+      |> render_submit(%{"entry" => %{"value" => "ses"}})
+
+      assert TestRepo.get_by!(Entry, key: "email_provider").value == "ses"
+    end
+
+    test "a forged submit with an undeclared value is rejected and shown as an error",
+         %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/select-flags")
+
+      view
+      |> element(~s(button[phx-value-key="email_provider"]))
+      |> render_click()
+
+      # The rendered <select> constrains a real browser, but event params are
+      # client-controlled — this is what a forged phx-submit looks like.
+      html =
+        view
+        |> element(~s(form[phx-value-key="email_provider"]))
+        |> render_submit(%{"entry" => %{"value" => "postmark"}})
+
+      assert html =~ "must be one of: mailjet, ses"
+      assert TestRepo.get_by!(Entry, key: "email_provider").value == "mailjet"
     end
   end
 

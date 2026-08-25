@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.2] - 2026-08-25
+
+### Fixed
+
+- **`:select` values are validated against their declared options on write.**
+  `PhoenixFlags.Type.validate_value/2` fell through to its catch-all `:ok`
+  clause for `select`, so `update_entry/3` accepted, stored and cached any
+  string at all:
+
+  ```elixir
+  update_entry("feature_tier", %{"value" => "not-an-option"})
+  #=> {:ok, %Entry{value: "not-an-option"}}   # before
+  #=> {:error, #Ecto.Changeset<errors: [value: {"must be one of: basic, pro", []}]>}
+  ```
+
+  The constraint was already enforced on the declared default at compile time
+  (`PhoenixFlags.Flag`), so this closes an inconsistency rather than adding a
+  new rule. It matters because the dashboard's rendered `<select>` is not a
+  validation boundary — LiveView event params are client-controlled — and an
+  out-of-range value reached `get/2`, crashing consumers that pattern match on
+  the known options.
+
+  `PhoenixFlags.Entry.changeset/2` gained an optional third argument carrying
+  `:select_options`; the membership check only runs when they are supplied, so
+  callers that build a bare form (or a `:name` module exporting only `flags/0`)
+  are unaffected.
+
+### Upgrading
+
+No migration or code change required. If you were relying on storing arbitrary
+values in a `:select` flag, those writes now return `{:error, changeset}` —
+either add the value to the flag's `:options` or change the flag to `:string`.
+Values already in the database are left alone; only new writes are checked.
+
 ## [0.6.1] - 2026-08-25
 
 ### Changed

@@ -8,6 +8,10 @@ defmodule PhoenixFlags.Type do
   @doc """
   Validates a string value against its type.
   Returns `:ok` or `{:error, message}`.
+
+  Types with no intrinsic constraint (`string`, `select`, `secret`) return `:ok`.
+  A `select` value is additionally checked against its declared `:options` by
+  `PhoenixFlags.Entry.changeset/3`, which is the only caller that knows them.
   """
   def validate_value("boolean", value) when value in ["true", "false"], do: :ok
   def validate_value("boolean", _), do: {:error, "must be true or false"}

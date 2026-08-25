@@ -82,9 +82,26 @@ defmodule PhoenixFlags.Server do
     old_value = entry.value
     attrs = maybe_encrypt(attrs, entry.type, config)
 
-    with {:ok, updated} <- entry |> Entry.changeset(attrs) |> config.repo.update() do
+    changeset = Entry.changeset(entry, attrs, select_options: select_options(config, entry.key))
+
+    with {:ok, updated} <- config.repo.update(changeset) do
       maybe_audit(config, entry.key, old_value, updated.value, entry.type, actor)
       {:ok, updated}
+    end
+  end
+
+  # A module built by `use PhoenixFlags` always generates `select_options/1`,
+  # which returns `[]` for anything that is not a `:select` flag. But `:name` is
+  # also allowed to be a minimal module exporting only `flags/0` (see
+  # `declared_key_set/1` and `PhoenixFlags.Flag.to_seed_map/1`), so fall back to
+  # no options — that skips the membership check instead of blocking the write.
+  defp select_options(%Config{name: name}, key) do
+    Code.ensure_loaded?(name)
+
+    if function_exported?(name, :select_options, 1) do
+      name.select_options(key)
+    else
+      []
     end
   end
 
@@ -213,7 +230,7 @@ defmodule PhoenixFlags.Server do
         attrs = maybe_encrypt(attrs, entry.type, config)
 
         entry
-        |> Entry.changeset(attrs)
+        |> Entry.changeset(attrs, select_options: select_options(config, key))
         |> config.repo.update()
         |> case do
           {:ok, updated} ->

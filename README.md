@@ -213,11 +213,17 @@ This means you never write seed migrations. Add a flag, deploy, done.
 | Integer | `:integer` | `"42"` | `42` | must parse as integer |
 | Decimal | `:decimal` | `"3000.50"` | `Decimal.new("3000.50")` | must parse as decimal |
 | Percentage | `:percentage` | `"50"` | `Decimal.new("50")` | 0..100 |
-| Select | `:select` | `"ses"` | `"ses"` | app-defined |
+| Select | `:select` | `"ses"` | `"ses"` | must be one of the declared `:options` |
 | Secret | `:secret` | ciphertext | `"plaintext"` | none (see [Secrets](#secrets)) |
 
 All values are stored as strings. Casting happens once when the cache is loaded,
 not on every read.
+
+`:select` membership is enforced on writes as well as on the declared default,
+so `get/2` can only ever return one of the declared option values. That matters
+because the rendered `<select>` is not a validation boundary — LiveView event
+params come from the client — and code that pattern matches on the known
+options would otherwise crash on an unexpected value.
 
 ## Secrets
 

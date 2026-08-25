@@ -13,7 +13,7 @@ defmodule PhoenixFlags.Entry do
   | `integer`    | `"42"`          | `42`                 | must parse as integer         |
   | `decimal`    | `"3000"`        | `Decimal.new("3000")`| must parse as decimal         |
   | `percentage` | `"50"`          | `Decimal.new("50")`  | 0..100                        |
-  | `select`     | `"ses"`         | `"ses"`              | none (app-defined)            |
+  | `select`     | `"ses"`         | `"ses"`              | must be a declared option     |
   | `secret`     | ciphertext      | decrypted plaintext  | none (encrypted at rest)      |
   """
 
@@ -41,8 +41,15 @@ defmodule PhoenixFlags.Entry do
 
   `:secret` entries accept `""` as a way to clear the stored value; for every
   other type, `""` is still treated as missing.
+
+  ## Options
+
+    * `:select_options` — the `{label, value}` tuples declared for a `:select`
+      flag. When given, the new value must be one of them. Callers that do not
+      have the declaration at hand (e.g. building an empty form) can omit it,
+      in which case no membership check runs.
   """
-  def changeset(entry, attrs) do
+  def changeset(entry, attrs, opts \\ []) do
     secret? = entry.type == "secret"
     empty_values = if secret?, do: [], else: [""]
 
@@ -50,6 +57,7 @@ defmodule PhoenixFlags.Entry do
     |> cast(attrs, [:value], empty_values: empty_values)
     |> maybe_validate_required(secret?)
     |> validate_by_type()
+    |> validate_select_option(Keyword.get(opts, :select_options, []))
   end
 
   defp maybe_validate_required(changeset, true = _secret?), do: changeset
@@ -66,6 +74,31 @@ defmodule PhoenixFlags.Entry do
         :ok -> changeset
         {:error, message} -> add_error(changeset, :value, message)
       end
+    end
+  end
+
+  # The declared options are the whole point of the `:select` type, and they are
+  # already enforced on the declared default at compile time (see
+  # `PhoenixFlags.Flag`). Nothing constrains what actually arrives here though:
+  # LiveView event params are client-controlled, so the rendered `<select>` is
+  # not a validation boundary. Without this check an out-of-range value is
+  # stored, cached, and handed back by `get/2`, crashing consumers that pattern
+  # match on the known options.
+  defp validate_select_option(changeset, []), do: changeset
+
+  defp validate_select_option(changeset, select_options) do
+    value = get_field(changeset, :value)
+
+    if get_field(changeset, :type) == "select" and not is_nil(value) do
+      allowed = Enum.map(select_options, &elem(&1, 1))
+
+      if value in allowed do
+        changeset
+      else
+        add_error(changeset, :value, "must be one of: #{Enum.join(allowed, ", ")}")
+      end
+    else
+      changeset
     end
   end
 
