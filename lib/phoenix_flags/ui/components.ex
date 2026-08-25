@@ -298,8 +298,11 @@ if Code.ensure_loaded?(Phoenix.Component) do
       assigns = assign(assigns, :weights, weight_map(assigns.entry, assigns.form))
 
       ~H"""
+      <%!-- One grid rather than a flex row per variant: with separate rows the
+            columns only line up when the labels happen to be the same width,
+            and a longer label squeezed its input narrower. --%>
       <div class="pf-variant-edit">
-        <div :for={{label, name, _declared} <- @variants} class="pf-variant-field">
+        <%= for {label, name, _declared} <- @variants do %>
           <label for={"pf-w-#{@entry.key}-#{name}"} class="pf-variant-name">{label}</label>
           <input
             type="number"
@@ -312,7 +315,7 @@ if Code.ensure_loaded?(Phoenix.Component) do
             class={input_class(@form, "pf-input pf-variant-input")}
           />
           <span class="pf-variant-pct">%</span>
-        </div>
+        <% end %>
         <p class={["pf-variant-total", if(weight_sum(@weights) == 100, do: "pf-variant-total-ok", else: "pf-variant-total-bad")]}>
           Total {weight_sum(@weights)}% {if weight_sum(@weights) == 100, do: "✓", else: "— must be 100"}
         </p>

@@ -82,6 +82,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The `:variant` weight inputs did not line up, and the digits sat under the
+  spinner.** Each row was its own flex container, so the columns only aligned
+  when the labels happened to be the same width — a longer label squeezed its
+  input narrower, since `.pf-input` sets `width: 100%` and a flex item may
+  shrink. The editor is now a single three-column grid, so every input shares one
+  column by construction, and the inputs are wider with more right padding so the
+  number clears the native spinner.
+
+- **Elixir 1.16 and 1.18 could not compile `PhoenixFlags.Target`.** The nested
+  `Condition` module sat at the bottom of the file, below the first `%Condition{}`
+  pattern match; those versions expand structs eagerly and failed with
+  "`Condition.__struct__/1` is undefined", while 1.20 tolerates it. `Condition`
+  now lives in its own file. Caught by the CI version matrix, which is exactly
+  what it is there for.
+
 - **Save and Cancel sat in the middle of the edit dialog.** Adding the targeting
   section below the value form left the footer stranded between the two, because
   HTML forbids nesting forms so the footer had to live inside the value one. The

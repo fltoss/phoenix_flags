@@ -870,6 +870,27 @@ defmodule PhoenixFlags.UI.DashboardLiveTest do
       assert html =~ "Total 100%"
     end
 
+    test "the weight inputs share one grid column so they align", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/variant-flags")
+
+      html = view |> element(~s(button[phx-value-key="checkout_flow"])) |> render_click()
+
+      # Each row used to be its own flex container, so the columns only lined up
+      # when the labels happened to be the same width -- a longer label squeezed
+      # its input narrower. The label/input/% cells must be direct children of a
+      # single grid, with no per-row wrapper.
+      refute html =~ "pf-variant-field"
+
+      editor = html |> String.split(~s(<div class="pf-variant-edit">), parts: 2) |> List.last()
+      label_at = :binary.match(editor, "pf-variant-name") |> elem(0)
+      input_at = :binary.match(editor, "pf-variant-input") |> elem(0)
+
+      assert label_at < input_at
+      # Two variants, so two of each cell.
+      assert editor |> String.split("pf-variant-input") |> length() == 3
+      assert editor |> String.split("pf-variant-pct") |> length() == 3
+    end
+
     test "saving a valid split writes it in declared order", %{conn: conn} do
       {:ok, view, _html} = live(conn, "/variant-flags")
 

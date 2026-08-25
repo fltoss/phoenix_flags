@@ -444,19 +444,13 @@
   text-align: right;
 }
 
+/* A single grid, so every row's input shares one column and lines up no matter
+   how long the label is. */
 .pf-variant-edit {
-  display: block;
-}
-
-.pf-variant-field {
-  display: flex;
+  display: grid;
+  grid-template-columns: 1fr max-content max-content;
   align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-}
-
-.pf-variant-field + .pf-variant-field {
-  margin-top: 10px;
+  gap: 10px 12px;
 }
 
 .pf-variant-name {
@@ -468,21 +462,21 @@
 }
 
 .pf-variant-input {
-  width: 92px;
+  width: 104px;
   text-align: right;
   font-variant-numeric: tabular-nums;
-  /* Native spinners sit inside the box, so pad the text clear of them. */
-  padding-right: 6px;
+  /* The native spinner sits inside the box, so keep the digits clear of it. */
+  padding-right: 14px;
 }
 
 .pf-variant-pct {
   color: var(--pf-text-secondary);
   font-size: 13px;
-  width: 12px;
 }
 
 .pf-variant-total {
-  margin: 4px 0 0;
+  grid-column: 1 / -1;
+  margin: 2px 0 0;
   padding-top: 12px;
   border-top: 1px solid var(--pf-border-light);
   font-size: 13px;
@@ -495,6 +489,11 @@
 
 .pf-variant-total-bad {
   color: var(--pf-error);
+}
+
+.pf-variant-edit .pf-field-error {
+  grid-column: 1 / -1;
+  margin: 0;
 }
 
 /* ------------------------------------------------------------------ */
