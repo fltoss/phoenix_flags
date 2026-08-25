@@ -23,6 +23,8 @@ if Code.ensure_loaded?(Phoenix.LiveView.Router) do
       * `:on_mount` — list of `Phoenix.LiveView.on_mount/1` hooks to add
         to the live session (e.g. for authentication)
       * `:live_socket_path` — defaults to `"/live"`
+      * `:app_js` — path to the host application's JS bundle, which must connect
+        a LiveSocket. Defaults to `"/assets/js/app.js"`.
     """
 
     @doc """

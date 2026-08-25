@@ -586,6 +586,7 @@ MyApp.SystemConfig.update_entry("enable_benefits", %{"value" => "true"},
 | `update_entry(key, attrs, opts \\ [])` | Update a value, sync cache + cluster. Accepts `:timeout` and `:actor`. |
 | `all_grouped()` | All entries grouped by category (for admin UI) |
 | `flags()` | List of declared `PhoenixFlags.Flag` structs |
+| `select_options(key)` | `{label, value}` options for a `:select` flag, or `[]` |
 | `audit_log()` | All audit entries, newest first (requires `audit: true`) |
 | `audit_log(key)` | Audit entries for a specific key, newest first |
 
