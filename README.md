@@ -568,10 +568,15 @@ end
 > A pipeline alone does not guard the WebSocket mount.
 
 Visit `/admin/flags` to see all your flags grouped by category with:
-- Toggle switches for booleans
-- Inline edit forms for other types
-- Validation errors displayed on save
+- Toggle switches for booleans, which save on click
+- An **Edit dialog** for every other type, opened from the row
+- Percentage bars for `:variant` flags, with a weights editor and a live total
+- `Set` / `Not set` for `:secret` flags, edited through a blank password field
+- Validation errors shown in the dialog, which stays open until the value is valid
 - Dark mode support (via `prefers-color-scheme`)
+
+The dialog closes on **Save**, **Cancel**, the **×**, **Escape**, or a click on
+the backdrop. Keyboard focus moves into the dialog when it opens.
 
 ### Dashboard Options
 
@@ -590,10 +595,17 @@ flags_dashboard "/flags",
 
 ### How It Works
 
-- **Self-contained** — ships its own CSS and HTML layout, served via an inline asset route
+- **Self-contained** — ships its own CSS and HTML layout, served via an inline
+  asset route with a content-hashed, immutable URL
 - **Isolated `live_session`** — won't conflict with your app's sessions
 - **Session-based config** — the router macro passes your config module through
   the LiveView session
+- **One dialog at a time** — the editor is rendered once for whichever flag is
+  being edited, derived from the current entries rather than held in its own
+  assign, so a cluster update can't leave it showing a stale value
+- **No client-side trust** — event payloads are re-validated server-side. A
+  `:variant` save is rebuilt from the *declared* variants in declaration order,
+  so a forged field cannot introduce a variant name or reorder the buckets
 
 ### Custom UI
 
@@ -725,25 +737,112 @@ MyApp.SystemConfig.update_entry("enable_benefits", %{"value" => "true"},
 
 ## Development
 
-A standalone dev server is included for manual testing of the dashboard:
+Everything below needs a reachable PostgreSQL. Override the connection with the
+`POSTGRES_USER`, `POSTGRES_PASSWORD` and `DB_HOST` environment variables.
+
+### Running the dashboard locally
 
 ```bash
 mix run dev.exs
 ```
 
-This boots a minimal Phoenix server on http://localhost:4005 with sample flags,
-audit logging enabled, and auto-opens the browser. It uses its own
-`phoenix_flags_dev` database (created automatically).
+This boots a real Phoenix + LiveView server on http://localhost:4005, opens your
+browser, and seeds a sample flag of every type — including two `:variant`
+experiments, so you can exercise the weights editor. It uses its own
+`phoenix_flags_dev` database, created automatically, and builds its JavaScript
+inline from the `phoenix` and `phoenix_live_view` dependencies, so there is no
+asset pipeline to set up.
 
-The test suite needs a reachable PostgreSQL; `mix test` creates and migrates
-`phoenix_flags_test` itself. Override the connection with the `POSTGRES_USER`,
-`POSTGRES_PASSWORD` and `DB_HOST` environment variables.
+Restart the server after changing code. Editing `priv/static/app.css` is picked
+up on restart too — the dashboard's asset module declares the stylesheet as an
+`@external_resource`, so changing it triggers recompilation.
+
+### Running the tests
+
+`mix test` creates and migrates `phoenix_flags_test` itself.
 
 ```bash
-mix test
-mix format --check-formatted
-mix credo
+mix test                                          # everything
+mix test test/phoenix_flags/variant_test.exs      # A/B assignment properties
+mix test test/phoenix_flags/ui                    # the LiveView dashboard
 ```
+
+The dashboard is covered by `Phoenix.LiveViewTest`, so its behaviour — opening
+the dialog, saving, validation errors, forged payloads — is tested without a
+browser.
+
+To match CI exactly:
+
+```bash
+mix format --check-formatted
+mix deps.unlock --check-unused
+mix compile --warnings-as-errors
+mix credo
+mix hex.audit
+MIX_ENV=dev mix docs
+```
+
+CI also runs the suite on Elixir 1.16/OTP 26, 1.18/OTP 27 and 1.20/OTP 28, which
+is what verifies the declared `elixir: "~> 1.16"` floor.
+
+### Poking at the API interactively
+
+`dev.exs` ends in `Process.sleep(:infinity)`, so `iex -S mix run dev.exs` never
+reaches a prompt. Use a throwaway script instead:
+
+```elixir
+# probe.exs  →  mix run probe.exs
+Code.require_file("bench/bench_helper.exs")
+alias PhoenixFlags.{Config, Server}
+
+defmodule Probe do
+  use PhoenixFlags, otp_app: :phoenix_flags, repo: PhoenixFlags.TestRepo
+
+  flag "exp",
+    type: :variant,
+    category: "e",
+    label: "Exp",
+    variants: [{"Control", "control", 90}, {"New", "new", 10}]
+end
+
+{:ok, _} =
+  Server.start_link(%Config{
+    otp_app: :phoenix_flags,
+    repo: PhoenixFlags.TestRepo,
+    name: Probe,
+    cache_enabled: true
+  })
+
+IO.inspect(for index <- 1..10, do: Probe.variant("exp", "user-#{index}"))
+Probe.update_entry("exp", %{"value" => "control=20,new=80"})
+IO.inspect(for index <- 1..10, do: Probe.variant("exp", "user-#{index}"))
+```
+
+> `bench/bench_helper.exs` points at the **test** database, so scripts that use
+> it — and `mix run bench/phoenix_flags_bench.exs` — leave rows behind that break
+> the next `mix test`. Clear them with:
+>
+> ```bash
+> MIX_ENV=test mix run -e '{:ok, _} = PhoenixFlags.TestRepo.start_link(); PhoenixFlags.TestRepo.delete_all(PhoenixFlags.Entry)'
+> ```
+
+### Trying it in your own app
+
+Point at a local checkout instead of Hex:
+
+```elixir
+{:phoenix_flags, path: "../phoenix_flags"}
+```
+
+Then `mix deps.get`, generate the migration, and mount the dashboard as above.
+
+### Benchmarks
+
+```bash
+mix run bench/phoenix_flags_bench.exs
+```
+
+See [docs/benchmarks.md](docs/benchmarks.md) for recorded results.
 
 ## License
 

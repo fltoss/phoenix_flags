@@ -1,7 +1,7 @@
 defmodule PhoenixFlags.MixProject do
   use Mix.Project
 
-  @version "0.7.1"
+  @version "0.8.0"
   @source_url "https://github.com/fltoss/phoenix_flags"
 
   def project do
@@ -73,7 +73,7 @@ defmodule PhoenixFlags.MixProject do
     [
       main: "readme",
       source_ref: "v#{@version}",
-      extras: ["README.md", "CHANGELOG.md", "LICENSE"],
+      extras: ["README.md", "CHANGELOG.md", "LICENSE", "docs/benchmarks.md"],
       skip_undefined_reference_warnings_on: ["CHANGELOG.md"]
     ]
   end

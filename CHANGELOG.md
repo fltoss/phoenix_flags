@@ -7,7 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-08-25
+
+### Changed
+
+- **The dashboard editor is now a modal dialog** instead of an inline form that
+  replaced the row. Opens from the row's Edit button; closes on Save, Cancel, the
+  ×, Escape, or a backdrop click. Keyboard focus moves into the dialog on open,
+  and a validation error keeps it open with the message in place.
+
+  The dialog is rendered once for whichever flag is being edited, derived from
+  the current entries rather than held in its own assign, so a cluster update
+  cannot leave it showing a stale value. `:secret` flags now go through the same
+  dialog as everything else rather than a bespoke inline form.
+
+  Dead CSS for the old inline editor (`.pf-row-editing`, `.pf-edit-actions`,
+  `.pf-input-wrap`) has been removed.
+
 ### Fixed
+
+- **Editing `priv/static/app.css` had no effect.** The stylesheet is read into a
+  module attribute at compile time, but nothing declared it as an
+  `@external_resource` — so Elixir did not know the module depended on it and
+  never recompiled. The old CSS stayed baked into the beam and kept being served.
+  Found while adding the modal styles, which silently did not appear.
+
+- **The edit dialog focused the close button on open.** `JS.focus_first/0` walks
+  DOM order and reached the header's × before any input, which put keyboard focus
+  in the wrong place and rendered the × with a focus ring. Focus is now scoped to
+  the dialog body.
+
+- Modal styling: the weight rows had a 120px label gutter that left a dead gap
+  for short labels, and a 92px right-aligned input put the value underneath the
+  native spinner. Labels and inputs now sit at opposite ends of the row with the
+  value padded clear of the spinner, and the footer has enough contrast to read
+  as a footer in dark mode. The close button's focus ring is `:focus-visible`
+  only, so it no longer shows for pointer users.
+
+- **`docs/benchmarks.md` was linked from the README but missing from `:extras`,**
+  so the link resolved on GitHub but not on hexdocs, and `mix docs` warned.
 
 - **The `mix run dev.exs` dashboard rendered but was completely inert.** Clicking
   Edit or a toggle did nothing, with `window.LiveView is undefined` in the
@@ -32,6 +70,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `.formatter.exs` now includes `dev.exs` and `bench/`. They sat outside the
   input globs, so `mix format --check-formatted` in CI never checked them.
 
+### Added
+
+- The README's Development section now covers running the dashboard locally,
+  running the suite, reproducing CI exactly, driving the API from a script (and
+  why `iex -S mix run dev.exs` never reaches a prompt), trying the library in
+  your own app via a path dependency, and the test-database pollution trap in
+  `bench/bench_helper.exs`.
+- `usage-rules.md` gains an Admin dashboard section, leading with the fact that
+  the dashboard ships no authentication and must be guarded at both the pipeline
+  and `:on_mount` layers.
 
 ## [0.7.1] - 2026-08-25
 

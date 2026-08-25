@@ -79,6 +79,27 @@ In test environment, a `Test` submodule is automatically generated:
 Stubs are only consulted when `cache_enabled: false`, which is the intended test
 configuration.
 
+## Admin dashboard
+
+Mount it with one router line, inside a pipeline that authenticates:
+
+```elixir
+scope "/admin" do
+  pipe_through [:browser, :require_admin]
+
+  flags_dashboard "/flags",
+    config: MyApp.SystemConfig,
+    on_mount: [{MyAppWeb.AdminAuth, :ensure_authenticated}]
+end
+```
+
+- The dashboard ships **no authentication**. Guard it at both layers: a router
+  pipeline for the HTTP request *and* an `:on_mount` hook for the LiveView
+  connection. A pipeline alone leaves the WebSocket mount open.
+- Booleans toggle in place; every other type opens an edit dialog. `:variant`
+  flags get a weights editor with a running total that must reach 100.
+- Options: `:config` (required), `:on_mount`, `:live_socket_path`, `:app_js`.
+
 ## Database migration
 
 Use the provided migration module:

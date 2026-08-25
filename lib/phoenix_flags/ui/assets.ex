@@ -4,7 +4,14 @@ if Code.ensure_loaded?(Plug) do
 
     @behaviour Plug
 
-    @css_content File.read!(Path.join(:code.priv_dir(:phoenix_flags), "static/app.css"))
+    @css_path Path.join(:code.priv_dir(:phoenix_flags), "static/app.css")
+
+    # Without this, Elixir does not know the module depends on the stylesheet, so
+    # editing app.css never triggers a recompile: the old CSS stays baked into the
+    # beam and silently keeps being served.
+    @external_resource @css_path
+
+    @css_content File.read!(@css_path)
     @css_hash :crypto.hash(:md5, @css_content) |> Base.url_encode64(padding: false)
 
     @spec current_hash(:css) :: String.t()

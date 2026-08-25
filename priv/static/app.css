@@ -35,10 +35,14 @@
   --pf-radius: 8px;
   --pf-radius-sm: 4px;
   --pf-focus-ring: 0 0 0 3px rgba(66, 99, 235, 0.3);
+  --pf-backdrop: rgba(15, 18, 25, 0.55);
+  --pf-modal-shadow: 0 16px 48px rgba(0, 0, 0, 0.22);
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
+    --pf-backdrop: rgba(0, 0, 0, 0.66);
+    --pf-modal-shadow: 0 16px 48px rgba(0, 0, 0, 0.6);
     --pf-bg: #1a1b1e;
     --pf-bg-subtle: #25262b;
     --pf-bg-muted: #2c2e33;
@@ -301,47 +305,8 @@
 }
 
 /* ------------------------------------------------------------------ */
-/* Edit Form Row                                                       */
-/* ------------------------------------------------------------------ */
-.pf-row-editing {
-  display: flex;
-  align-items: flex-start;
-  gap: 16px;
-  padding: 16px 24px;
-  background: var(--pf-bg-muted);
-  border-bottom: 1px solid var(--pf-border-light);
-}
-
-.pf-row-editing:last-child {
-  border-bottom: none;
-}
-
-.pf-row-editing .pf-row-info {
-  flex: 1;
-}
-
-.pf-row-editing .pf-row-label {
-  margin-bottom: 4px;
-}
-
-.pf-row-editing .pf-row-desc {
-  margin-bottom: 12px;
-}
-
-.pf-edit-actions {
-  display: flex;
-  gap: 8px;
-  padding-top: 24px;
-  flex-shrink: 0;
-}
-
-/* ------------------------------------------------------------------ */
 /* Form Inputs                                                         */
 /* ------------------------------------------------------------------ */
-.pf-input-wrap {
-  max-width: 280px;
-}
-
 .pf-input,
 .pf-select {
   display: block;
@@ -480,36 +445,46 @@
 }
 
 .pf-variant-edit {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
+  display: block;
 }
 
 .pf-variant-field {
   display: flex;
   align-items: center;
-  gap: 8px;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.pf-variant-field + .pf-variant-field {
+  margin-top: 10px;
 }
 
 .pf-variant-name {
-  color: var(--pf-text-secondary);
-  font-size: 13px;
-  min-width: 120px;
+  color: var(--pf-text);
+  font-size: 14px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .pf-variant-input {
-  width: 88px;
+  width: 92px;
   text-align: right;
   font-variant-numeric: tabular-nums;
+  /* Native spinners sit inside the box, so pad the text clear of them. */
+  padding-right: 6px;
 }
 
 .pf-variant-pct {
-  color: var(--pf-text-muted);
+  color: var(--pf-text-secondary);
   font-size: 13px;
+  width: 12px;
 }
 
 .pf-variant-total {
-  margin: 0;
+  margin: 4px 0 0;
+  padding-top: 12px;
+  border-top: 1px solid var(--pf-border-light);
   font-size: 13px;
   font-variant-numeric: tabular-nums;
 }
@@ -520,4 +495,111 @@
 
 .pf-variant-total-bad {
   color: var(--pf-error);
+}
+
+/* ------------------------------------------------------------------ */
+/* Edit modal                                                          */
+/* ------------------------------------------------------------------ */
+.pf-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.pf-modal-backdrop {
+  position: absolute;
+  inset: 0;
+  background: var(--pf-backdrop);
+}
+
+.pf-modal {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  max-width: 460px;
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
+  background: var(--pf-bg);
+  border: 1px solid var(--pf-border);
+  border-radius: var(--pf-radius);
+  box-shadow: var(--pf-modal-shadow);
+}
+
+.pf-modal-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--pf-border-light);
+}
+
+.pf-modal-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--pf-text);
+}
+
+.pf-modal-close {
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  padding: 0 4px;
+  font-size: 22px;
+  line-height: 1;
+  color: var(--pf-text-muted);
+  cursor: pointer;
+  border-radius: var(--pf-radius-sm);
+}
+
+.pf-modal-close:hover {
+  color: var(--pf-text);
+}
+
+.pf-modal-close:focus {
+  outline: none;
+}
+
+.pf-modal-close:focus-visible {
+  outline: none;
+  box-shadow: var(--pf-focus-ring);
+}
+
+.pf-modal-body {
+  padding: 20px;
+}
+
+.pf-modal-desc {
+  margin: 0 0 14px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--pf-text-secondary);
+}
+
+.pf-modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 20px;
+  border-top: 1px solid var(--pf-border);
+  background: var(--pf-bg-muted);
+  border-radius: 0 0 var(--pf-radius) var(--pf-radius);
+}
+
+@media (max-width: 520px) {
+  .pf-modal-overlay {
+    padding: 0;
+    align-items: flex-end;
+  }
+
+  .pf-modal {
+    max-width: none;
+    border-radius: var(--pf-radius) var(--pf-radius) 0 0;
+  }
 }

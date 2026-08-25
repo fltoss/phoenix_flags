@@ -3,9 +3,9 @@ if Code.ensure_loaded?(Phoenix.Component) do
     @moduledoc false
     use Phoenix.Component
 
+    alias Phoenix.LiveView.JS
+
     attr(:entry, :map, required: true)
-    attr(:form, :map, required: true)
-    attr(:editing, :boolean, required: true)
     attr(:select_options, :list, default: [])
     attr(:variants, :list, default: [])
 
@@ -32,7 +32,7 @@ if Code.ensure_loaded?(Phoenix.Component) do
       """
     end
 
-    def config_row(%{entry: %{type: "secret"}, editing: false} = assigns) do
+    def config_row(%{entry: %{type: "secret"}} = assigns) do
       ~H"""
       <div class="pf-row">
         <.entry_info entry={@entry} />
@@ -46,34 +46,7 @@ if Code.ensure_loaded?(Phoenix.Component) do
       """
     end
 
-    def config_row(%{entry: %{type: "secret"}, editing: true} = assigns) do
-      ~H"""
-      <div class="pf-row-editing">
-        <form id={"pf-form-#{@entry.key}"} phx-submit="pf-save" phx-value-key={@entry.key}>
-          <div class="pf-row-info">
-            <.entry_info entry={@entry} />
-            <div class="pf-input-wrap">
-              <input
-                type="password"
-                name="entry[value]"
-                value=""
-                autocomplete="new-password"
-                placeholder="Enter new value (leave blank to clear)"
-                class={input_class(@form, "pf-input")}
-              />
-              <.field_errors errors={@form[:value].errors} />
-            </div>
-          </div>
-          <div class="pf-edit-actions">
-            <button type="submit" class="pf-btn pf-btn-primary">Save</button>
-            <button type="button" phx-click="pf-cancel" class="pf-btn">Cancel</button>
-          </div>
-        </form>
-      </div>
-      """
-    end
-
-    def config_row(%{entry: %{type: "variant"}, editing: false} = assigns) do
+    def config_row(%{entry: %{type: "variant"}} = assigns) do
       ~H"""
       <div class="pf-row">
         <.entry_info entry={@entry} />
@@ -87,7 +60,7 @@ if Code.ensure_loaded?(Phoenix.Component) do
       """
     end
 
-    def config_row(%{editing: false} = assigns) do
+    def config_row(assigns) do
       ~H"""
       <div class="pf-row">
         <.entry_info entry={@entry} />
@@ -101,18 +74,47 @@ if Code.ensure_loaded?(Phoenix.Component) do
       """
     end
 
-    def config_row(%{editing: true} = assigns) do
+    attr(:entry, :map, required: true)
+    attr(:form, :map, required: true)
+    attr(:select_options, :list, default: [])
+    attr(:variants, :list, default: [])
+
+    @doc """
+    The edit dialog. Rendered once by the dashboard for whichever flag is being
+    edited, rather than inline in the row.
+    """
+    def edit_modal(assigns) do
       ~H"""
-      <div class="pf-row-editing">
-        <form
-          id={"pf-form-#{@entry.key}"}
-          phx-submit="pf-save"
-          phx-change={if @entry.type == "variant", do: "pf-validate"}
-          phx-value-key={@entry.key}
+      <div class="pf-modal-overlay" phx-window-keydown="pf-cancel" phx-key="Escape">
+        <div class="pf-modal-backdrop" phx-click="pf-cancel"></div>
+
+        <div
+          class="pf-modal"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby={"pf-modal-title-#{@entry.key}"}
+          phx-mounted={JS.focus_first(to: "##{@entry.key |> modal_body_id()}")}
         >
-          <div class="pf-row-info">
-            <.entry_info entry={@entry} />
-            <div class="pf-input-wrap">
+          <form
+            id={"pf-form-#{@entry.key}"}
+            phx-submit="pf-save"
+            phx-change={if @entry.type == "variant", do: "pf-validate"}
+            phx-value-key={@entry.key}
+          >
+            <div class="pf-modal-header">
+              <h3 class="pf-modal-title" id={"pf-modal-title-#{@entry.key}"}>{@entry.label}</h3>
+              <button
+                type="button"
+                class="pf-modal-close"
+                phx-click="pf-cancel"
+                aria-label="Close"
+              >
+                &times;
+              </button>
+            </div>
+
+            <div class="pf-modal-body" id={modal_body_id(@entry.key)}>
+              <p :if={@entry.description} class="pf-modal-desc">{@entry.description}</p>
               <.config_input
                 entry={@entry}
                 form={@form}
@@ -120,21 +122,40 @@ if Code.ensure_loaded?(Phoenix.Component) do
                 variants={@variants}
               />
             </div>
-          </div>
-          <div class="pf-edit-actions">
-            <button type="submit" class="pf-btn pf-btn-primary">Save</button>
-            <button type="button" phx-click="pf-cancel" class="pf-btn">Cancel</button>
-          </div>
-        </form>
+
+            <div class="pf-modal-footer">
+              <button type="button" phx-click="pf-cancel" class="pf-btn">Cancel</button>
+              <button type="submit" class="pf-btn pf-btn-primary">Save</button>
+            </div>
+          </form>
+        </div>
       </div>
       """
     end
+
+    defp modal_body_id(key), do: "pf-modal-body-#{key}"
 
     defp entry_info(assigns) do
       ~H"""
       <div class="pf-row-info">
         <p class="pf-row-label">{@entry.label}</p>
         <p :if={@entry.description} class="pf-row-desc">{@entry.description}</p>
+      </div>
+      """
+    end
+
+    defp config_input(%{entry: %{type: "secret"}} = assigns) do
+      ~H"""
+      <div>
+        <input
+          type="password"
+          name="entry[value]"
+          value=""
+          autocomplete="new-password"
+          placeholder="Enter new value (leave blank to clear)"
+          class={input_class(@form, "pf-input")}
+        />
+        <.field_errors errors={@form[:value].errors} />
       </div>
       """
     end

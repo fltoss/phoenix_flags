@@ -144,15 +144,31 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
             <.config_row
               :for={entry <- entries}
               entry={entry}
-              form={@forms[entry.key]}
-              editing={@editing_key == entry.key}
               select_options={@config_module.select_options(entry.key)}
               variants={@config_module.variants(entry.key)}
             />
           </div>
         </div>
       </div>
+
+      <.edit_modal
+        :if={editing_entry(@grouped_configs, @editing_key)}
+        entry={editing_entry(@grouped_configs, @editing_key)}
+        form={@forms[@editing_key]}
+        select_options={@config_module.select_options(@editing_key)}
+        variants={@config_module.variants(@editing_key)}
+      />
       """
+    end
+
+    # Derived from grouped_configs rather than held in its own assign, so a
+    # reload cannot leave the dialog showing a stale entry.
+    defp editing_entry(_grouped, nil), do: nil
+
+    defp editing_entry(grouped, key) do
+      grouped
+      |> Enum.flat_map(fn {_category, entries} -> entries end)
+      |> Enum.find(&(&1.key == key))
     end
 
     # A variant editor posts one field per variant, so fold them back into the
@@ -192,11 +208,7 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
       |> Enum.map(fn {_label, name, _weight} -> name end)
     end
 
-    defp find_entry(socket, key) do
-      socket.assigns.grouped_configs
-      |> Enum.flat_map(fn {_category, entries} -> entries end)
-      |> Enum.find(&(&1.key == key))
-    end
+    defp find_entry(socket, key), do: editing_entry(socket.assigns.grouped_configs, key)
 
     defp reload(socket) do
       grouped = socket.assigns.config_module.all_grouped()

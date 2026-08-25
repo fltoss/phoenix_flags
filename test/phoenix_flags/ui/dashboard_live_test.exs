@@ -374,6 +374,160 @@ defmodule PhoenixFlags.UI.DashboardLiveTest do
     end
   end
 
+  describe "edit modal" do
+    setup do
+      TestRepo.insert!(%Entry{
+        key: "max_retries",
+        value: "5",
+        type: "integer",
+        category: "system",
+        label: "Max Retries",
+        description: "How many times to retry."
+      })
+
+      :ok
+    end
+
+    test "no dialog is rendered until Edit is clicked", %{conn: conn} do
+      {:ok, _view, html} = live(conn, "/flags")
+
+      refute html =~ "pf-modal"
+      refute html =~ ~s(role="dialog")
+    end
+
+    test "Edit opens a labelled dialog and leaves the row in place", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/flags")
+
+      html = view |> element(~s(button[phx-value-key="max_retries"])) |> render_click()
+
+      assert html =~ ~s(role="dialog")
+      assert html =~ ~s(aria-modal="true")
+      assert html =~ ~s(aria-labelledby="pf-modal-title-max_retries")
+      assert html =~ ~s(id="pf-modal-title-max_retries")
+      assert html =~ "How many times to retry."
+      assert html =~ ~s(name="entry[value]")
+
+      # The row itself is no longer replaced by the editor.
+      assert html =~ "pf-row"
+    end
+
+    test "focus is directed into the body, not the close button", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/flags")
+
+      html = view |> element(~s(button[phx-value-key="max_retries"])) |> render_click()
+
+      # JS.focus_first/0 walks DOM order and would land on the header's close
+      # button, which is both wrong for keyboard users and why the x rendered
+      # with a focus ring on open. It must be scoped to the body instead.
+      assert html =~ ~s(id="pf-modal-body-max_retries")
+
+      assert html =~
+               ~s(phx-mounted="[[&quot;focus_first&quot;,{&quot;to&quot;:&quot;#pf-modal-body-max_retries&quot;}]]")
+    end
+
+    test "Cancel closes the dialog", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/flags")
+
+      view |> element(~s(button[phx-value-key="max_retries"])) |> render_click()
+      html = view |> element(~s(.pf-modal-footer button), "Cancel") |> render_click()
+
+      refute html =~ ~s(role="dialog")
+    end
+
+    test "the close control closes the dialog", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/flags")
+
+      view |> element(~s(button[phx-value-key="max_retries"])) |> render_click()
+      html = view |> element(".pf-modal-close") |> render_click()
+
+      refute html =~ ~s(role="dialog")
+    end
+
+    test "clicking the backdrop closes the dialog", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/flags")
+
+      view |> element(~s(button[phx-value-key="max_retries"])) |> render_click()
+      html = view |> element(".pf-modal-backdrop") |> render_click()
+
+      refute html =~ ~s(role="dialog")
+    end
+
+    test "Escape closes the dialog", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/flags")
+
+      view |> element(~s(button[phx-value-key="max_retries"])) |> render_click()
+      html = element(view, ".pf-modal-overlay") |> render_keydown(%{"key" => "Escape"})
+
+      refute html =~ ~s(role="dialog")
+    end
+
+    test "saving from the dialog persists and closes it", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/flags")
+
+      view |> element(~s(button[phx-value-key="max_retries"])) |> render_click()
+
+      html =
+        view
+        |> element(~s(form[phx-value-key="max_retries"]))
+        |> render_submit(%{"entry" => %{"value" => "9"}})
+
+      refute html =~ ~s(role="dialog")
+      assert TestRepo.get_by!(Entry, key: "max_retries").value == "9"
+    end
+
+    test "a validation error keeps the dialog open and shows the message", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/flags")
+
+      view |> element(~s(button[phx-value-key="max_retries"])) |> render_click()
+
+      html =
+        view
+        |> element(~s(form[phx-value-key="max_retries"]))
+        |> render_submit(%{"entry" => %{"value" => "not-a-number"}})
+
+      assert html =~ ~s(role="dialog")
+      assert html =~ "must be a whole number"
+      assert TestRepo.get_by!(Entry, key: "max_retries").value == "5"
+    end
+
+    test "a secret is edited through the dialog too", %{conn: conn} do
+      TestRepo.insert!(%Entry{
+        key: "api_key",
+        value: "",
+        type: "secret",
+        category: "system",
+        label: "API Key"
+      })
+
+      {:ok, view, _html} = live(conn, "/flags")
+
+      html = view |> element(~s(button[phx-value-key="api_key"])) |> render_click()
+
+      assert html =~ ~s(role="dialog")
+      assert html =~ ~s(type="password")
+      assert html =~ ~s(autocomplete="new-password")
+    end
+
+    test "only one dialog exists at a time", %{conn: conn} do
+      TestRepo.insert!(%Entry{
+        key: "other",
+        value: "x",
+        type: "string",
+        category: "system",
+        label: "Other"
+      })
+
+      {:ok, view, _html} = live(conn, "/flags")
+
+      view |> element(~s(button[phx-value-key="max_retries"])) |> render_click()
+      html = view |> element(~s(button[phx-value-key="other"])) |> render_click()
+
+      assert html |> String.split(~s(role="dialog")) |> length() == 2
+      assert html =~ ~s(aria-labelledby="pf-modal-title-other")
+      refute html =~ ~s(aria-labelledby="pf-modal-title-max_retries")
+    end
+  end
+
   describe "forged events cannot crash the dashboard" do
     setup do
       TestRepo.insert!(%Entry{
