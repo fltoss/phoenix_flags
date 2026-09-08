@@ -16,6 +16,72 @@ defmodule PhoenixFlags.UI.DashboardLiveTest do
     :ok
   end
 
+  describe "the script tag that loads the host bundle" do
+    # Getting this wrong is quiet and total. An ESM bundle loaded as a classic
+    # script throws `import declarations may only appear at top level of a
+    # module` before it defines anything, so the LiveSocket never connects and
+    # every toggle, dialog and Save on this page does nothing at all — with no
+    # server-side error to notice. Only the browser console says so.
+    test "is a plain script by default, for a classic bundle", %{conn: conn} do
+      html = conn |> Phoenix.ConnTest.get("/flags") |> Phoenix.ConnTest.html_response(200)
+
+      assert html =~ ~s(src="/assets/js/app.js")
+      refute html =~ ~s(type="module")
+    end
+
+    test "is a module script when the host says its bundle is ESM" do
+      html =
+        render_component(&PhoenixFlags.UI.Layouts.root/1,
+          app_js: "/assets/js/app.js",
+          app_js_type: "module",
+          css_path: "/flags/css-abc",
+          inner_content: {:safe, ""}
+        )
+
+      assert html =~ ~s(type="module")
+      assert html =~ ~s(src="/assets/js/app.js")
+    end
+
+    test "asks for no favicon by default, rather than 404ing on /favicon.ico" do
+      # A layout with no icon makes the browser request `/favicon.ico`, and a
+      # host that does not serve one gets a 404 in the console of a page that
+      # works perfectly. `data:,` is an empty document and no request at all.
+      html =
+        render_component(&PhoenixFlags.UI.Layouts.root/1,
+          css_path: "/flags/css-abc",
+          inner_content: {:safe, ""}
+        )
+
+      assert html =~ ~s(<link rel="icon" href="data:,")
+    end
+
+    test "shows the host's own icon when it names one" do
+      html =
+        render_component(&PhoenixFlags.UI.Layouts.root/1,
+          favicon: "/favicon.svg",
+          css_path: "/flags/css-abc",
+          inner_content: {:safe, ""}
+        )
+
+      assert html =~ ~s(href="/favicon.svg")
+    end
+
+    test "carries the type through from the router option" do
+      # The option has to survive `__options__/1`, the generated pipeline and
+      # the plug that assigns it — four hops, any of which could drop it.
+      assert {_session, _pipeline, _session_opts, _route_opts, "/x.js", "module", "/i.svg"} =
+               PhoenixFlags.Router.__options__(
+                 config: PhoenixFlags.TestConfig,
+                 app_js: "/x.js",
+                 app_js_type: "module",
+                 favicon: "/i.svg"
+               )
+
+      assert {_session, _pipeline, _session_opts, _route_opts, "/assets/js/app.js", nil, "data:,"} =
+               PhoenixFlags.Router.__options__(config: PhoenixFlags.TestConfig)
+    end
+  end
+
   describe "renders" do
     test "shows the dashboard heading", %{conn: conn} do
       {:ok, _view, html} = live(conn, "/flags")

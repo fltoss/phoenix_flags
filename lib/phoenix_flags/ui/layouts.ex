@@ -20,8 +20,21 @@ if Code.ensure_loaded?(Phoenix.Component) do
           <meta name="viewport" content="width=device-width, initial-scale=1" />
           <meta name="csrf-token" content={Phoenix.Controller.get_csrf_token()} />
           <title>{assigns[:page_title] || "PhoenixFlags"}</title>
+          <%!-- `data:,` by default: with no icon the browser asks for
+                `/favicon.ico`, and a host that does not serve one gets a 404 in
+                the console of a page that is otherwise working fine. --%>
+          <link rel="icon" href={assigns[:favicon] || "data:,"} />
           <link rel="stylesheet" href={@css_path} />
-          <script defer phx-track-static src={assigns[:app_js] || "/assets/js/app.js"}>
+          <%!-- `type` is omitted unless the host says its bundle is ESM. An ESM
+                bundle loaded as a classic script throws before it defines
+                anything, so the LiveSocket never connects and nothing on this
+                page works — see `:app_js_type` in `PhoenixFlags.Router`. --%>
+          <script
+            type={assigns[:app_js_type]}
+            defer
+            phx-track-static
+            src={assigns[:app_js] || "/assets/js/app.js"}
+          >
           </script>
         </head>
         <body class="pf-body">

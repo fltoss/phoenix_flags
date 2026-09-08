@@ -688,8 +688,17 @@ the backdrop. Keyboard focus moves into the dialog when it opens.
 ```elixir
 flags_dashboard "/flags",
   config: MyApp.SystemConfig,                              # required
-  on_mount: [{MyAppWeb.AdminAuth, :ensure_authenticated}]  # auth hooks
+  on_mount: [{MyAppWeb.AdminAuth, :ensure_authenticated}], # auth hooks
+  app_js_type: "module",                                   # if your bundle is ESM
+  favicon: "/favicon.svg"                                  # defaults to no request
 ```
+
+> **If your bundle is ESM, you must pass `app_js_type: "module"`.** esbuild's
+> `--format=esm`, and any bundle using `import()` for code splitting, produce
+> one. Loaded as a classic script it throws `import declarations may only
+> appear at top level of a module` before defining anything — so the LiveSocket
+> never connects and every toggle, dialog and Save on this page silently does
+> nothing. There is no server-side error; only the browser console says so.
 
 | Option | Description |
 |---|---|

@@ -5,7 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.10.0] - 2026-09-08
+
+### Added
+
+- `:app_js_type` on `flags_dashboard/2`, for hosts whose bundle is ESM. Pass
+  `app_js_type: "module"` and the dashboard's script tag carries it. Omitted by
+  default, so a classic bundle loads exactly as before.
+
+  Without it an ESM bundle throws `import declarations may only appear at top
+  level of a module` before defining anything: the LiveSocket never connects and
+  every control on the dashboard silently does nothing, with no server-side
+  error to notice.
+
+- `:favicon` on `flags_dashboard/2`. Defaults to `"data:,"` — an empty document
+  — so the browser stops asking for `/favicon.ico` and a host that does not
+  serve one no longer gets a 404 in the console of a working page. Pass your
+  own href to show it instead.
 
 ## [0.9.0] - 2026-08-25
 

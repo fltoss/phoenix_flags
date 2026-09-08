@@ -25,6 +25,20 @@ if Code.ensure_loaded?(Phoenix.LiveView.Router) do
       * `:live_socket_path` — defaults to `"/live"`
       * `:app_js` — path to the host application's JS bundle, which must connect
         a LiveSocket. Defaults to `"/assets/js/app.js"`.
+      * `:favicon` — href for the dashboard's icon. Defaults to `"data:,"`,
+        an empty document, which stops the browser asking: a layout with no icon
+        makes it request `/favicon.ico`, and a host that does not serve one gets
+        a 404 in the console of an otherwise working page. Point it at your own
+        to show it instead.
+      * `:app_js_type` — the script tag's `type`. Pass `"module"` when the host
+        bundle is ESM, which esbuild emits with `--format=esm` and which any
+        bundle using `import()` for code splitting needs. Omitted by default,
+        so a classic bundle is loaded as it always was.
+
+        Getting this wrong is quiet and total: an ESM bundle loaded as a classic
+        script throws `import declarations may only appear at top level of a
+        module` before it defines anything, so the LiveSocket never connects and
+        every control on the dashboard does nothing at all.
     """
 
     @doc """
@@ -32,7 +46,7 @@ if Code.ensure_loaded?(Phoenix.LiveView.Router) do
     """
     defmacro flags_dashboard(path, opts) do
       quote bind_quoted: binding() do
-        {session_name, pipeline_name, session_opts, route_opts, app_js} =
+        {session_name, pipeline_name, session_opts, route_opts, app_js, app_js_type, favicon} =
           PhoenixFlags.Router.__options__(opts)
 
         scope path, alias: false, as: false do
@@ -47,7 +61,7 @@ if Code.ensure_loaded?(Phoenix.LiveView.Router) do
           # with a shared name would add a dead duplicate clause and silently
           # reuse the first mount's :app_js.
           pipeline pipeline_name do
-            plug(:phoenix_flags_assign_app_js, app_js)
+            plug(:phoenix_flags_assign_app_js, {app_js, app_js_type, favicon})
           end
 
           pipe_through(pipeline_name)
@@ -59,8 +73,11 @@ if Code.ensure_loaded?(Phoenix.LiveView.Router) do
 
         unless Module.defines?(__MODULE__, {:phoenix_flags_assign_app_js, 2}) do
           @doc false
-          def phoenix_flags_assign_app_js(conn, app_js) do
-            Plug.Conn.assign(conn, :app_js, app_js)
+          def phoenix_flags_assign_app_js(conn, {app_js, app_js_type, favicon}) do
+            conn
+            |> Plug.Conn.assign(:app_js, app_js)
+            |> Plug.Conn.assign(:app_js_type, app_js_type)
+            |> Plug.Conn.assign(:favicon, favicon)
           end
         end
       end
@@ -72,6 +89,8 @@ if Code.ensure_loaded?(Phoenix.LiveView.Router) do
       on_mount = Keyword.get(options, :on_mount, [])
       live_socket_path = Keyword.get(options, :live_socket_path, "/live")
       app_js = Keyword.get(options, :app_js, "/assets/js/app.js")
+      app_js_type = Keyword.get(options, :app_js_type)
+      favicon = Keyword.get(options, :favicon, "data:,")
 
       session_opts = [
         root_layout: {PhoenixFlags.UI.Layouts, :root},
@@ -87,7 +106,7 @@ if Code.ensure_loaded?(Phoenix.LiveView.Router) do
       session_name = :"phoenix_flags_#{config}"
       pipeline_name = :"phoenix_flags_assigns_#{config}"
 
-      {session_name, pipeline_name, session_opts, route_opts, app_js}
+      {session_name, pipeline_name, session_opts, route_opts, app_js, app_js_type, favicon}
     end
 
     @doc false
