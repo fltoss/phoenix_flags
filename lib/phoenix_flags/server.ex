@@ -785,6 +785,36 @@ defmodule PhoenixFlags.Server do
     {:noreply, config}
   end
 
+  # A crash report prints the message being handled and the mailbox, and an
+  # {:update, ...} carries a secret's plaintext. GenServer only declares the
+  # callback from Elixir 1.17; OTP calls it either way.
+  if Version.match?(System.version(), ">= 1.17.0") do
+    @impl true
+    def format_status(status), do: redact_status(status)
+  else
+    def format_status(status), do: redact_status(status)
+  end
+
+  defp redact_status(status) when is_map(status) do
+    status
+    |> redact_field(:message, &redact_message/1)
+    |> redact_field(:queue, fn queue -> Enum.map(queue, &redact_message/1) end)
+  end
+
+  defp redact_field(status, field, redact) do
+    case status do
+      %{^field => value} -> Map.put(status, field, redact.(value))
+      _without -> status
+    end
+  end
+
+  defp redact_message({:update, key, _attrs, actor}), do: {:update, key, :redacted, actor}
+
+  defp redact_message({:"$gen_call", from, {:update, key, _attrs, actor}}),
+    do: {:"$gen_call", from, {:update, key, :redacted, actor}}
+
+  defp redact_message(message), do: message
+
   @impl true
   def terminate(_reason, %Config{} = config) do
     # Leave the cache, config, order, and targets keys intact so that get/3 and

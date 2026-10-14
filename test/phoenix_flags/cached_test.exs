@@ -53,6 +53,25 @@ defmodule PhoenixFlags.CachedTest do
     %{server: pid, config: config}
   end
 
+  describe "format_status/1" do
+    test "keeps an update's attrs, which may hold a secret, out of crash reports" do
+      call = {:"$gen_call", {self(), make_ref()}, {:update, "api_key", %{"value" => "sk"}, "me"}}
+
+      status =
+        PhoenixFlags.Server.format_status(%{
+          message: {:update, "api_key", %{"value" => "sk"}, "me"},
+          queue: [call, :refresh]
+        })
+
+      assert status.message == {:update, "api_key", :redacted, "me"}
+
+      assert [{:"$gen_call", _from, {:update, "api_key", :redacted, "me"}}, :refresh] =
+               status.queue
+
+      refute inspect(status) =~ "sk"
+    end
+  end
+
   describe "get/3 with cache enabled" do
     test "reads seeded boolean from cache" do
       assert CachedConfig.get("cached_bool") == true
