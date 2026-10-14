@@ -17,15 +17,7 @@ defmodule PhoenixFlags.MixProject do
       description: "Database-backed, cached, cluster-aware system configuration for Phoenix.",
       package: package(),
       docs: docs(),
-      source_url: @source_url,
-      hex: [
-        # CVE-2026-32686 (unbounded decimal exponent) was mitigated in decimal
-        # 2.4.0 and made the default in 3.0.0, which is why we require
-        # `~> 2.4 or ~> 3.0` above. The advisory's machine-readable affected
-        # range is missing its `fixed` event, so `mix hex.audit` still flags
-        # the patched 3.x releases. Drop this once the advisory is corrected.
-        ignore_advisories: ["CVE-2026-32686"]
-      ]
+      source_url: @source_url
     ]
   end
 
@@ -41,6 +33,7 @@ defmodule PhoenixFlags.MixProject do
   defp deps do
     [
       {:ecto_sql, "~> 3.10"},
+      # 2.4 mitigates CVE-2026-32686 (unbounded decimal exponent).
       {:decimal, "~> 2.4 or ~> 3.0"},
       {:telemetry, "~> 0.4 or ~> 1.0"},
       {:jason, "~> 1.4", optional: true},
