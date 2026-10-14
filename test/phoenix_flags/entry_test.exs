@@ -6,6 +6,12 @@ defmodule PhoenixFlags.EntryTest do
   alias PhoenixFlags.Entry
 
   describe "cast_value/2" do
+    @tag :capture_log
+    test "a percentage out of range does not load, as a save would refuse it" do
+      assert Entry.cast_value("150", "percentage") == nil
+      assert Entry.cast_value("NaN", "decimal") == nil
+    end
+
     test "nil stays nil for every type" do
       for type <- ~w(string boolean integer decimal percentage select secret) do
         assert Entry.cast_value(nil, type) == nil
@@ -67,11 +73,33 @@ defmodule PhoenixFlags.EntryTest do
       assert changeset.changes == %{value: "new"}
     end
 
-    test "treats \"\" as missing for non-secret types" do
-      changeset = Entry.changeset(entry("string", "old"), %{"value" => ""})
+    test "treats \"\" as missing for a type with no empty value" do
+      changeset = Entry.changeset(entry("integer", "5"), %{"value" => ""})
 
       refute changeset.valid?
       assert {"can't be blank", _} = changeset.errors[:value]
+    end
+
+    test "accepts \"\" for a string, which could otherwise never be cleared" do
+      changeset = Entry.changeset(entry("string", "old"), %{"value" => ""})
+
+      assert changeset.valid?
+      assert changeset.changes == %{value: ""}
+    end
+
+    test "accepts \"\" for a select only when it is a declared option" do
+      assert Entry.changeset(entry("select", "a"), %{"value" => ""},
+               select_options: [{"None", ""}, {"A", "a"}]
+             ).valid?
+
+      refute Entry.changeset(entry("select", "a"), %{"value" => ""}, select_options: [{"A", "a"}]).valid?
+    end
+
+    test "rejects NaN and Infinity for a decimal or a percentage" do
+      for type <- ~w(decimal percentage), value <- ~w(NaN Infinity -Infinity) do
+        changeset = Entry.changeset(entry(type, "1"), %{"value" => value})
+        assert {"must be a finite number", _} = changeset.errors[:value], "#{type} #{value}"
+      end
     end
 
     test "accepts \"\" for a secret, as the way to clear it" do

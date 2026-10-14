@@ -27,6 +27,9 @@ defmodule PhoenixFlags.Entry do
 
   require Logger
 
+  # Types for which "" is a value rather than a missing one.
+  @empty_allowed ~w(string select secret)
+
   @primary_key {:id, :binary_id, autogenerate: true}
 
   schema "system_flags" do
@@ -43,8 +46,9 @@ defmodule PhoenixFlags.Entry do
   @doc """
   Changeset for updating an entry's value. Only `:value` is writable.
 
-  `:secret` entries accept `""` as a way to clear the stored value; for every
-  other type, `""` is still treated as missing.
+  `""` is a value for a `:string`, a `:select` that declares it, and a
+  `:secret`, where it clears the stored value. For every other type it is
+  treated as missing.
 
   ## Options
 
@@ -57,18 +61,18 @@ defmodule PhoenixFlags.Entry do
       rule as `:select_options`.
   """
   def changeset(entry, attrs, opts \\ []) do
-    secret? = entry.type == "secret"
-    empty_values = if secret?, do: [], else: [""]
+    empty_allowed? = entry.type in @empty_allowed
+    empty_values = if empty_allowed?, do: [], else: [""]
 
     entry
     |> cast(attrs, [:value], empty_values: empty_values)
-    |> maybe_validate_required(secret?)
+    |> maybe_validate_required(empty_allowed?)
     |> validate_by_type()
     |> validate_select_option(Keyword.get(opts, :select_options, []))
     |> validate_variant_names(Keyword.get(opts, :variants, []))
   end
 
-  defp maybe_validate_required(changeset, true = _secret?), do: changeset
+  defp maybe_validate_required(changeset, true = _empty_allowed?), do: changeset
   defp maybe_validate_required(changeset, false), do: validate_required(changeset, [:value])
 
   defp validate_by_type(changeset) do
@@ -136,56 +140,22 @@ defmodule PhoenixFlags.Entry do
 
   @doc """
   Casts a stored string value to its native Elixir type.
+
+  A value that does not parse came from outside the library -- a hand-edited
+  row, a data migration -- so it is logged and read as `nil`, except a
+  boolean, which reads as `false`: failing closed beats changing what
+  `get(key) == false` means.
   """
   def cast_value(nil, _type), do: nil
-  def cast_value("true", "boolean"), do: true
-  def cast_value("false", "boolean"), do: false
 
-  # `changeset/3` only ever stores "true" or "false", so anything else came from
-  # outside the library (a hand-edited row, a data migration). The other casts
-  # warn and fall back rather than failing silently; do the same here. The
-  # fallback stays `false` on purpose — for a boolean flag, failing closed beats
-  # returning `nil` and changing what `get(key) == false` means.
-  def cast_value(value, "boolean") do
-    Logger.warning("PhoenixFlags: failed to cast #{inspect(value)} as boolean, using false")
-    false
-  end
-
-  def cast_value(value, "integer") do
-    case Integer.parse(value) do
-      {integer, ""} ->
-        integer
-
-      _ ->
-        Logger.warning("PhoenixFlags: failed to cast #{inspect(value)} as integer")
-        nil
-    end
-  end
-
-  def cast_value(value, type) when type in ["decimal", "percentage"] do
-    case Decimal.parse(value) do
-      {decimal, ""} ->
-        decimal
-
-      _ ->
-        Logger.warning("PhoenixFlags: failed to cast #{inspect(value)} as #{type}")
-        nil
-    end
-  end
-
-  # Parsed once when the cache loads, so `variant/2` only has to hash and walk a
-  # short list. ttl/seed come from the declaration and are filled in by the
-  # Server, which is the only caller that has it.
-  def cast_value(value, "variant") do
-    case PhoenixFlags.Variant.parse(value) do
-      {:ok, variant} ->
-        variant
+  def cast_value(value, type) do
+    case PhoenixFlags.Type.parse(type, value) do
+      {:ok, cast} ->
+        cast
 
       {:error, message} ->
-        Logger.warning("PhoenixFlags: failed to cast #{inspect(value)} as variant: #{message}")
-        nil
+        Logger.warning("PhoenixFlags: failed to cast #{inspect(value)} as #{type}: #{message}")
+        if type == "boolean", do: false
     end
   end
-
-  def cast_value(value, _type), do: value
 end

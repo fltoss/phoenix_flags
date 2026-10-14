@@ -1,60 +1,69 @@
 defmodule PhoenixFlags.Type do
   @moduledoc false
 
+  # The one place a stored string is read as its type. Validating a save and
+  # casting a value on a cache load used to parse separately, and drifted: the
+  # cast never checked a percentage's range, so a hand-edited "150" loaded.
+
   @valid_types ~w(boolean string integer decimal percentage select secret variant)a
 
   def valid_types, do: @valid_types
 
   @doc """
-  Validates a string value against its type.
-  Returns `:ok` or `{:error, message}`.
+  Parses a stored string as `type`: `{:ok, value}` or `{:error, message}`.
 
-  Types with no intrinsic constraint (`string`, `select`, `secret`) return `:ok`.
-  A `select` value is additionally checked against its declared `:options`, and a
-  `variant` value against its declared `:variants`, by
+  Types with no intrinsic constraint (`string`, `select`, `secret`) parse to
+  themselves. A `select` value is additionally checked against its declared
+  `:options`, and a `variant` value against its declared `:variants`, by
   `PhoenixFlags.Entry.changeset/3` — the only caller that knows them.
   """
-  def validate_value("boolean", value) when value in ["true", "false"], do: :ok
-  def validate_value("boolean", _), do: {:error, "must be true or false"}
+  def parse(type, value)
 
-  def validate_value("integer", value) do
+  def parse("boolean", "true"), do: {:ok, true}
+  def parse("boolean", "false"), do: {:ok, false}
+  def parse("boolean", _value), do: {:error, "must be true or false"}
+
+  def parse("integer", value) when is_binary(value) do
     case Integer.parse(value) do
-      {_, ""} -> :ok
-      _ -> {:error, "must be a whole number"}
+      {integer, ""} -> {:ok, integer}
+      _other -> {:error, "must be a whole number"}
     end
   end
 
-  def validate_value("decimal", value) do
-    case Decimal.parse(value) do
-      {_, ""} -> :ok
-      _ -> {:error, "must be a valid number"}
+  def parse("decimal", value) when is_binary(value), do: finite(value)
+
+  def parse("percentage", value) when is_binary(value) do
+    with {:ok, decimal} <- finite(value) do
+      if Decimal.compare(decimal, 0) != :lt and Decimal.compare(decimal, 100) != :gt do
+        {:ok, decimal}
+      else
+        {:error, "must be between 0 and 100"}
+      end
     end
   end
 
-  def validate_value("percentage", value) do
-    case Decimal.parse(value) do
-      {decimal, ""} ->
-        if Decimal.compare(decimal, 0) in [:gt, :eq] and
-             Decimal.compare(decimal, 100) in [:lt, :eq] do
-          :ok
-        else
-          {:error, "must be between 0 and 100"}
-        end
+  # Structural only: the weights parse and total 100. Whether the names are the
+  # declared ones needs the declaration, so Entry.changeset/3 does that part.
+  def parse("variant", value), do: PhoenixFlags.Variant.parse(value)
 
-      _ ->
-        {:error, "must be a valid number"}
-    end
-  end
+  def parse(_type, value) when is_binary(value), do: {:ok, value}
+  def parse(_type, _value), do: {:error, "must be a string"}
 
-  # Structural check only: that the weights parse and total 100. Whether the
-  # names are the declared ones needs the flag declaration, so `changeset/3`
-  # does that part.
-  def validate_value("variant", value) do
-    case PhoenixFlags.Variant.parse(value) do
-      {:ok, _variant} -> :ok
+  @doc "`:ok` when `value` parses as `type`, else `{:error, message}`."
+  def validate_value(type, value) do
+    case parse(type, value) do
+      {:ok, _value} -> :ok
       {:error, message} -> {:error, message}
     end
   end
 
-  def validate_value(_type, _value), do: :ok
+  # Decimal.parse accepts "NaN" and "Infinity", and a NaN handed to a caller
+  # raises on the first comparison.
+  defp finite(value) do
+    case Decimal.parse(value) do
+      {%Decimal{coef: coef}, ""} when coef in [:NaN, :inf] -> {:error, "must be a finite number"}
+      {decimal, ""} -> {:ok, decimal}
+      _other -> {:error, "must be a valid number"}
+    end
+  end
 end
