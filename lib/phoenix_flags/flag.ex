@@ -226,7 +226,7 @@ defmodule PhoenixFlags.Flag do
   defp validate_variant_name!(name) do
     if name != String.trim(name) or String.contains?(name, [",", "="]) do
       raise PhoenixFlags.Error,
-            "PhoenixFlags.Flag variant name #{inspect(name)} must not contain \",\" or \"=\" " <>
+            ~s(PhoenixFlags.Flag variant name #{inspect(name)} must not contain "," or "=" ) <>
               "or start or end with whitespace"
     end
   end

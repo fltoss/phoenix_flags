@@ -69,18 +69,24 @@ defmodule PhoenixFlags do
     validate_unique_keys!(env)
 
     quote do
+      # Built once here: every lookup by key, on the read path and on every
+      # render of the dashboard, is then a map access rather than a list scan.
+      @phoenix_flags_ordered Enum.reverse(@phoenix_flags)
+      @phoenix_flags_by_key Map.new(@phoenix_flags_ordered, &{&1.key, &1})
+
       @doc """
       Returns the list of declared flags. Generated from `flag/2` macro calls.
       """
-      def flags do
-        @phoenix_flags |> Enum.reverse()
-      end
+      def flags, do: @phoenix_flags_ordered
+
+      @doc false
+      def __flag__(key), do: Map.get(@phoenix_flags_by_key, key)
 
       @doc """
       Returns `{label, value}` options for a `:select` flag, or `[]` if not a select.
       """
       def select_options(key) do
-        case Enum.find(flags(), &(&1.key == key)) do
+        case __flag__(key) do
           %PhoenixFlags.Flag{options: options} when is_list(options) -> options
           _ -> []
         end
@@ -94,7 +100,7 @@ defmodule PhoenixFlags do
       the database, which the dashboard can change at runtime.
       """
       def variants(key) do
-        case Enum.find(flags(), &(&1.key == key)) do
+        case __flag__(key) do
           %PhoenixFlags.Flag{type: :variant, variants: variants} when is_list(variants) ->
             variants
 
