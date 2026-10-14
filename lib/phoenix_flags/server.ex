@@ -170,19 +170,23 @@ defmodule PhoenixFlags.Server do
   end
 
   @doc """
-  Returns all audit log entries, newest first.
+  Returns audit log entries, newest first: every flag's, or one key's.
+
+      audit_log(MyApp.SystemConfig)
+      audit_log(MyApp.SystemConfig, "enable_benefits")
+      audit_log(MyApp.SystemConfig, limit: 50)
+      audit_log(MyApp.SystemConfig, "enable_benefits", limit: 50)
 
   Raises `PhoenixFlags.Error` unless the instance is configured with `audit: true`.
   """
-  def audit_log(instance), do: instance |> Cache.config!() |> Audit.enabled!() |> Audit.list()
+  def audit_log(instance, key_or_opts \\ [])
+  def audit_log(instance, opts) when is_list(opts), do: audit_log(instance, nil, opts)
+  def audit_log(instance, key), do: audit_log(instance, key, [])
 
-  @doc """
-  Returns audit log entries for a specific key, newest first.
-
-  Raises `PhoenixFlags.Error` unless the instance is configured with `audit: true`.
-  """
-  def audit_log(instance, key),
-    do: instance |> Cache.config!() |> Audit.enabled!() |> Audit.list(key)
+  @doc false
+  def audit_log(instance, key, opts) do
+    instance |> Cache.config!() |> Audit.enabled!() |> Audit.list(key, opts)
+  end
 
   @doc """
   Returns the config for the given instance. Used by the UI to resolve actor.

@@ -300,21 +300,22 @@ defmodule PhoenixFlags do
       end
 
       @doc """
-      Returns all audit log entries, newest first.
+      Returns audit log entries, newest first: every flag's, or one key's.
+
+          audit_log()
+          audit_log("enable_benefits")
+          audit_log(limit: 50)
+          audit_log("enable_benefits", limit: 50)
 
       Raises `PhoenixFlags.Error` unless `audit: true` is set.
       """
-      def audit_log do
-        PhoenixFlags.Server.audit_log(__MODULE__)
+      def audit_log(key_or_opts \\ []) do
+        PhoenixFlags.Server.audit_log(__MODULE__, key_or_opts)
       end
 
-      @doc """
-      Returns audit log entries for a specific flag key, newest first.
-
-      Raises `PhoenixFlags.Error` unless `audit: true` is set.
-      """
-      def audit_log(key) do
-        PhoenixFlags.Server.audit_log(__MODULE__, key)
+      @doc false
+      def audit_log(key, opts) do
+        PhoenixFlags.Server.audit_log(__MODULE__, key, opts)
       end
 
       Module.register_attribute(__MODULE__, :phoenix_flags, accumulate: true)
