@@ -2,9 +2,8 @@ defmodule PhoenixFlags.Targeting do
   @moduledoc false
 
   # Targeting rules as the rest of the library uses them: persisted and
-  # validated against the flag they force, built into the map the cache holds,
-  # and resolved on a read. What a rule *is* and how one matches a context is
-  # PhoenixFlags.Target.
+  # validated against the flag they force, loaded for a read, and resolved.
+  # What a rule *is* and how one matches a context is PhoenixFlags.Target.
 
   import Ecto.Query
 
@@ -34,14 +33,8 @@ defmodule PhoenixFlags.Targeting do
 
   @doc "Validates and inserts a rule. The caller refreshes the cache."
   def insert(%Config{} = config, key, attrs) do
-    attrs =
-      attrs
-      |> Map.new()
-      |> normalise_conditions()
-      |> Map.put(:key, key)
-      |> Map.put_new(:position, next_position(config, key))
-
     with {:ok, entry} <- Store.fetch(config, key),
+         attrs = rule_attrs(config, key, attrs),
          %{valid?: true} = changeset <- rule_changeset(config, entry, attrs),
          {:ok, target} <- config.repo.insert(changeset) do
       {:ok, config.repo.preload(target, :conditions)}
@@ -51,51 +44,83 @@ defmodule PhoenixFlags.Targeting do
     end
   end
 
-  @doc "Deletes a rule by id. The caller refreshes the cache."
+  @doc """
+  Deletes a rule by id, returning it with its conditions. The caller refreshes
+  the cache. An id that is not a UUID is `:not_found`; a database that cannot
+  be reached is `:unavailable`, not a missing rule.
+  """
   def delete(%Config{} = config, target_id) do
-    case config.repo.get(Target, target_id) do
-      nil -> {:error, :not_found}
-      target -> config.repo.delete(target)
+    with {:ok, id} <- Ecto.UUID.cast(target_id),
+         %Target{} = target <- config.repo.get(Target, id) do
+      target = config.repo.preload(target, :conditions)
+      config.repo.delete(target)
+    else
+      _missing -> {:error, :not_found}
     end
   rescue
     error ->
       Logger.warning(
-        "PhoenixFlags: failed to delete target #{inspect(target_id)}: #{inspect(error)}"
+        "PhoenixFlags: failed to delete target #{inspect(target_id)}: #{inspect(error.__struct__)}"
       )
 
-      {:error, :not_found}
+      {:error, :unavailable}
+  end
+
+  @doc "A rule in words, for the audit log: `company_id in 1, 2 -> true`."
+  def describe(%Target{conditions: conditions, value: value}) when is_list(conditions) do
+    conditions
+    |> Enum.map_join(" and ", &"#{&1.attribute} #{&1.operator} #{Enum.join(&1.values, ", ")}")
+    |> Kernel.<>(" -> #{value}")
   end
 
   @doc """
-  Every rule, keyed by flag as `{type, rules}`, for the cache. The type is
-  needed to cast a matching rule's value, and holding it here means a read does
-  not scan the entries for it. Rules for a flag with no row are not loaded.
+  Every loadable rule, keyed by flag as `{type, rules}`, for the cache. The
+  type is needed to cast a matching rule's value, and holding it here means a
+  read does not scan the entries for it.
+
+  A rule is not loaded for a flag with no row, nor when the flag no longer
+  accepts its value -- after a type change, or once its variant or option is no
+  longer declared. It stays in the table, so a rollback brings it back.
   """
   def load(%Config{} = config, entries) do
-    types = Map.new(entries, &{&1.key, &1.type})
+    by_key = Map.new(entries, &{&1.key, &1})
 
-    config.repo.all(
-      from(t in Target, order_by: [asc: t.key, asc: t.position], preload: :conditions)
-    )
+    from(t in Target, order_by: [asc: t.key, asc: t.position], preload: :conditions)
+    |> config.repo.all()
     |> Enum.group_by(& &1.key)
     |> Enum.reduce(%{}, fn {key, rules}, acc ->
-      case Map.fetch(types, key) do
-        {:ok, type} -> Map.put(acc, key, {type, Enum.sort_by(rules, & &1.position)})
+      case Map.fetch(by_key, key) do
+        {:ok, entry} -> put_loadable(acc, config, entry, rules)
         :error -> acc
       end
     end)
   end
 
+  @doc "One flag's loadable rules as `{type, rules}`, read from the table, or nil."
+  def load_for(%Config{} = config, key) do
+    with {:ok, entry} <- Store.fetch(config, key),
+         [_ | _] = rules <- list(config, key),
+         [_ | _] = loadable <- loadable(config, entry, rules) do
+      {entry.type, loadable}
+    else
+      _none -> nil
+    end
+  rescue
+    DBConnection.OwnershipError -> nil
+  end
+
   @doc """
-  The value the first matching rule forces, cast to the flag's type, or
-  `:none`. `context` is a zero-arity function: it is only called once a rule
-  exists for the flag, so a flag with no rules never reads the context.
+  `{:ok, value, type}` for the first rule in `found` matching the context, the
+  value cast to the flag's type, or `:none`. `context` is a zero-arity function,
+  called only once there are rules, so a flag without any never reads it.
   Never raises.
   """
-  def resolve(loaded, key, context) do
-    case Map.get(loaded, key) do
-      {type, rules} -> resolve_with(rules, context.(), type)
-      _absent -> :none
+  def resolve(nil, _key, _context), do: :none
+
+  def resolve({type, rules}, key, context) do
+    case resolve_with(rules, context.(), type) do
+      {:ok, value} -> {:ok, value, type}
+      :none -> :none
     end
   rescue
     error ->
@@ -120,9 +145,52 @@ defmodule PhoenixFlags.Targeting do
     end
   end
 
+  defp put_loadable(acc, config, entry, rules) do
+    case loadable(config, entry, Enum.sort_by(rules, & &1.position)) do
+      [] -> acc
+      loadable -> Map.put(acc, entry.key, {entry.type, loadable})
+    end
+  end
+
+  defp loadable(config, entry, rules) do
+    {valid, invalid} = Enum.split_with(rules, &valid_value?(config, entry, &1.value))
+
+    if invalid != [] do
+      Logger.warning(
+        "PhoenixFlags: #{length(invalid)} targeting rule(s) for #{inspect(entry.key)} force a " <>
+          "value the flag no longer accepts and are ignored: " <>
+          Enum.map_join(invalid, "; ", &describe/1)
+      )
+    end
+
+    valid
+  end
+
+  defp valid_value?(config, entry, value) do
+    Ecto.Changeset.change(%Target{value: value})
+    |> validate_value(config, entry)
+    |> Map.get(:valid?)
+  end
+
   defp rule_changeset(config, entry, attrs) do
     %Target{} |> Target.changeset(attrs) |> validate_value(config, entry)
   end
+
+  # Attrs arrive with atom keys from Elixir callers and string keys from a form.
+  # Mixing the two makes cast/3 raise, so the key and position are added in
+  # whichever the caller used -- and the position is only counted when missing.
+  defp rule_attrs(config, key, attrs) do
+    attrs = attrs |> Map.new() |> normalise_conditions()
+
+    {key_field, position_field} =
+      if string_keyed?(attrs), do: {"key", "position"}, else: {:key, :position}
+
+    attrs
+    |> Map.put(key_field, key)
+    |> Map.put_new_lazy(position_field, fn -> next_position(config, key) end)
+  end
+
+  defp string_keyed?(attrs), do: Enum.any?(Map.keys(attrs), &is_binary/1)
 
   # The documented API takes conditions as keyword lists, which reads better in
   # Elixir than a list of maps; cast_assoc/3 needs maps.

@@ -100,24 +100,39 @@ defmodule PhoenixFlags.Server do
   The value must be valid for the flag's type, checked with the same rules a
   dashboard save goes through. `:secret` flags cannot be targeted — a rule value
   would sit in the targets table as plaintext, defeating the encryptor.
+
+  Pass `actor:` in `opts` to name who added it in the audit log.
   """
-  def put_target(instance, key, attrs) do
+  def put_target(instance, key, attrs, opts \\ []) do
     config = Cache.config!(instance)
 
     with {:ok, target} <- Targeting.insert(config, key, attrs) do
-      refresh_targets(config)
+      Audit.record(config, key, nil, "rule: " <> Targeting.describe(target), "rule", opts[:actor])
+      refresh_rules(config)
       {:ok, target}
     end
   end
 
   @doc """
   Deletes a targeting rule by id. Its conditions go with it.
+
+  Returns `{:error, :not_found}` for an unknown id and `{:error, :unavailable}`
+  when the database cannot be reached. Pass `actor:` in `opts` for the audit log.
   """
-  def delete_target(instance, target_id) do
+  def delete_target(instance, target_id, opts \\ []) do
     config = Cache.config!(instance)
 
     with {:ok, deleted} <- Targeting.delete(config, target_id) do
-      refresh_targets(config)
+      Audit.record(
+        config,
+        deleted.key,
+        "rule: " <> Targeting.describe(deleted),
+        nil,
+        "rule",
+        opts[:actor]
+      )
+
+      refresh_rules(config)
       {:ok, deleted}
     end
   end
@@ -222,6 +237,14 @@ defmodule PhoenixFlags.Server do
     {:reply, update(config, key, attrs, actor), config}
   end
 
+  # Rules are reloaded here rather than in the caller, so a rule change and a
+  # periodic reload cannot overwrite each other with an older read.
+  def handle_call(:reload_rules, _from, %Config{} = config) do
+    store_targets(config, Cache.entries(config.name))
+    notify_peers(config)
+    {:reply, :ok, config}
+  end
+
   @impl true
   def handle_info(:reload, %Config{} = config) do
     try_load_cache(config, "failed to reload cache")
@@ -315,10 +338,15 @@ defmodule PhoenixFlags.Server do
     error -> Logger.warning("PhoenixFlags: failed to load targeting rules: #{inspect(error)}")
   end
 
-  defp refresh_targets(config) do
-    store_targets(config, Store.all(config))
-    notify_peers(config)
+  # Uncached there is nothing to refresh: reads take rules from the table.
+  # A failed call is healed by the periodic refresh, so it is logged, not raised.
+  defp refresh_rules(%Config{cache_enabled: true, name: name}) do
+    GenServer.call(name, :reload_rules)
+  catch
+    :exit, reason -> Logger.warning("PhoenixFlags: could not reload rules: #{inspect(reason)}")
   end
+
+  defp refresh_rules(%Config{}), do: :ok
 
   defp reload_everywhere(%Config{cache_enabled: true, name: name} = config) do
     send(name, :reload)

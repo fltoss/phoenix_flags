@@ -23,17 +23,8 @@ defmodule PhoenixFlags.Reader do
 
   def get(instance, key, default, opts) do
     case Cache.config(instance) do
-      {:ok, %{cache_enabled: true}} ->
-        case targeted(instance, key, opts) do
-          {:ok, value} -> value
-          :none -> instance |> Cache.values() |> Map.get(key, default) |> reject_variant(key)
-        end
-
-      {:ok, config} ->
-        config |> get_uncached(instance, key, default, opts) |> reject_variant(key)
-
-      :error ->
-        default
+      {:ok, config} -> read(config, instance, key, default, opts)
+      :error -> default
     end
   end
 
@@ -75,30 +66,52 @@ defmodule PhoenixFlags.Reader do
   defp entries(%Config{cache_enabled: true}, instance), do: Cache.entries(instance)
   defp entries(%Config{} = config, _instance), do: config.repo.all(Entry)
 
+  defp read(%Config{cache_enabled: true} = config, instance, key, default, opts) do
+    case targeted(config, instance, key, opts) do
+      {:ok, value, type} -> forced(value, type, key)
+      :none -> instance |> Cache.values() |> stored(key, default) |> reject_variant(key)
+    end
+  end
+
+  defp read(%Config{} = config, instance, key, default, opts) do
+    with :none <- Testing.get_stub(instance, key),
+         :none <- targeted(config, instance, key, opts) do
+      config |> read_row(key, default) |> reject_variant(key)
+    else
+      {:ok, value} -> value
+      {:ok, value, type} -> forced(value, type, key)
+    end
+  end
+
+  # A value that failed to cast or decrypt is cached as nil; the caller's
+  # default is a better answer than a nil they did not ask for.
+  defp stored(values, key, default) do
+    case Map.fetch(values, key) do
+      {:ok, nil} -> default
+      {:ok, value} -> value
+      :error -> default
+    end
+  end
+
+  defp forced(_value, "variant", key), do: variant_has_no_value!(key)
+  defp forced(value, _type, _key), do: value
+
   # A :variant flag holds a split, not a value, so reading it with get/3 is
-  # always a mistake. Benchmarked at ~0ns against the bare read, so it is
-  # guarded here -- one place, covering every caller.
-  defp reject_variant(%Variant{}, key) do
+  # always a mistake -- targeted or not. Benchmarked at ~0ns against the bare
+  # read, so it is guarded here, one place covering every caller.
+  defp reject_variant(%Variant{}, key), do: variant_has_no_value!(key)
+  defp reject_variant(value, _key), do: value
+
+  defp variant_has_no_value!(key) do
     raise PhoenixFlags.Error,
           "#{inspect(key)} is a :variant flag and has no single value. " <>
             "Read it with variant(#{inspect(key)}, identity) instead of get/2."
   end
 
-  defp reject_variant(value, _key), do: value
-
-  defp get_uncached(config, instance, key, default, opts) do
-    with :none <- Testing.get_stub(instance, key),
-         :none <- targeted(instance, key, opts) do
-      read_row(config, key, default)
-    else
-      {:ok, value} -> value
-    end
-  end
-
   defp assign(instance, key, identity, opts) do
     case Cache.config(instance) do
-      {:ok, %{cache_enabled: true}} ->
-        targeted_or(instance, key, opts, fn ->
+      {:ok, %{cache_enabled: true} = config} ->
+        targeted_or(config, instance, key, opts, fn ->
           instance |> Cache.values() |> Map.get(key) |> assign_from(key, identity, opts)
         end)
 
@@ -117,7 +130,7 @@ defmodule PhoenixFlags.Reader do
         stubbed
 
       :none ->
-        targeted_or(instance, key, opts, fn ->
+        targeted_or(config, instance, key, opts, fn ->
           config |> read_variant(key) |> assign_from(key, identity, opts)
         end)
     end
@@ -125,23 +138,39 @@ defmodule PhoenixFlags.Reader do
 
   # A rule pins the caller to a named arm, overriding the split: "force this
   # for them" would mean little otherwise.
-  defp targeted_or(instance, key, opts, otherwise) do
-    case targeted(instance, key, opts) do
-      {:ok, targeted} -> targeted
+  defp targeted_or(config, instance, key, opts, otherwise) do
+    case targeted(config, instance, key, opts) do
+      {:ok, targeted, _type} -> targeted
       :none -> otherwise.()
     end
   end
 
-  defp targeted(instance, key, opts) do
-    instance |> Cache.targets() |> Targeting.resolve(key, fn -> context(opts) end)
+  defp targeted(%Config{cache_enabled: true}, instance, key, opts) do
+    instance |> Cache.targets() |> Map.get(key) |> Targeting.resolve(key, fn -> context(opts) end)
+  end
+
+  # Uncached reads take the rules from the table, which is what a test that
+  # adds one expects -- and nothing a test does reaches a cache another test
+  # reads. The context comes first, so a caller without one never queries.
+  defp targeted(%Config{} = config, _instance, key, opts) do
+    case context(opts) do
+      context when map_size(context) == 0 -> :none
+      context -> config |> Targeting.load_for(key) |> Targeting.resolve(key, fn -> context end)
+    end
   end
 
   defp context(opts) do
     case option(opts, :context, nil) do
       context when is_map(context) -> context
-      context when is_list(context) -> Map.new(context)
+      context when is_list(context) -> to_context(context)
       _absent -> Context.get()
     end
+  end
+
+  defp to_context(list) do
+    Map.new(list)
+  rescue
+    _not_a_keyword_list -> %{}
   end
 
   defp assign_from(%Variant{} = variant, key, identity, opts),
@@ -155,7 +184,7 @@ defmodule PhoenixFlags.Reader do
     case config.repo.get_by(Entry, key: key) do
       # Through the same decoding as the cache, or a secret would come back as
       # its ciphertext.
-      %Entry{} = entry -> Values.decode(entry, config)
+      %Entry{} = entry -> with nil <- Values.decode(entry, config), do: default
       nil -> default
     end
   rescue

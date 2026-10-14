@@ -189,17 +189,18 @@ defmodule PhoenixFlags do
             value: "true"
           )
 
-      See `PhoenixFlags.Target`.
+      Pass `actor:` in `opts` to record who added it in the audit log. See
+      `PhoenixFlags.Target`.
       """
-      def put_target(key, attrs) do
-        PhoenixFlags.Server.put_target(__MODULE__, key, attrs)
+      def put_target(key, attrs, opts \\ []) do
+        PhoenixFlags.Server.put_target(__MODULE__, key, attrs, opts)
       end
 
       @doc """
-      Deletes a targeting rule by id.
+      Deletes a targeting rule by id. Pass `actor:` in `opts` for the audit log.
       """
-      def delete_target(target_id) do
-        PhoenixFlags.Server.delete_target(__MODULE__, target_id)
+      def delete_target(target_id, opts \\ []) do
+        PhoenixFlags.Server.delete_target(__MODULE__, target_id, opts)
       end
     end
   end

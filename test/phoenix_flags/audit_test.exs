@@ -64,6 +64,28 @@ defmodule PhoenixFlags.AuditTest do
   end
 
   describe "audit enabled" do
+    test "records adding and deleting a targeting rule, with the actor" do
+      {module, config} = start_server!(audit: true)
+
+      {:ok, target} =
+        Server.put_target(
+          module,
+          "flag_a",
+          [value: "false", conditions: [[attribute: :c, operator: :in, values: [1, 2]]]],
+          actor: "alice"
+        )
+
+      {:ok, _deleted} = Server.delete_target(config.name, target.id, actor: "bob")
+
+      assert [deleted, added] = Server.audit_log(module, "flag_a")
+
+      assert {added.old_value, added.new_value, added.actor} ==
+               {nil, "rule: c in 1, 2 -> false", "alice"}
+
+      assert {deleted.old_value, deleted.new_value, deleted.actor} ==
+               {"rule: c in 1, 2 -> false", nil, "bob"}
+    end
+
     test "inserts an audit record on successful update" do
       {_module, config} = start_server!(audit: true)
 

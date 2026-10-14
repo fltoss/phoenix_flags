@@ -55,7 +55,7 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
     def handle_event("pf-add-target", %{"key" => key, "target" => params}, socket) do
       config = socket.assigns.config_module
 
-      case config.put_target(key, target_attrs(params)) do
+      case config.put_target(key, target_attrs(params), actor: socket.assigns.actor) do
         {:ok, _target} ->
           {:noreply,
            socket
@@ -76,7 +76,7 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
       config = socket.assigns.config_module
       key = socket.assigns.editing_key
 
-      case config.delete_target(target_id) do
+      case config.delete_target(target_id, actor: socket.assigns.actor) do
         {:ok, _deleted} ->
           {:noreply, socket |> assign(:target_error, nil) |> load_targets(key) |> reload()}
 

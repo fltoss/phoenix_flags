@@ -398,4 +398,109 @@ defmodule PhoenixFlags.TargetingTest do
       assert TConfig.get("greeting", :gone) == :gone
     end
   end
+
+  describe "uncached reads take rules from the table" do
+    setup do
+      start_uncached!()
+
+      TestRepo.insert!(%Entry{
+        key: "enable_benefits",
+        value: "false",
+        type: "boolean",
+        category: "a",
+        label: "Benefits"
+      })
+
+      :ok
+    end
+
+    test "a rule written straight to the table is seen" do
+      TestRepo.insert!(%PhoenixFlags.Target{
+        key: "enable_benefits",
+        value: "true",
+        conditions: [
+          %PhoenixFlags.Target.Condition{attribute: "company_id", operator: "in", values: ["7"]}
+        ]
+      })
+
+      assert TConfig.get("enable_benefits", false, context: %{company_id: 7}) == true
+    end
+
+    test "adding a rule writes nothing another test could read" do
+      rule!("enable_benefits", :company_id, [123], "true")
+
+      assert :persistent_term.get({PhoenixFlags, TConfig, :targets}, %{}) == %{}
+    end
+  end
+
+  describe "put_target/3 input" do
+    setup do: start_cached!()
+
+    test "accepts string-keyed attrs, as a form posts them" do
+      assert {:ok, target} =
+               TConfig.put_target("enable_benefits", %{
+                 "value" => "true",
+                 "conditions" => [
+                   %{"attribute" => "company_id", "operator" => "in", "values" => ["9"]}
+                 ]
+               })
+
+      assert target.position == 0
+      assert TConfig.get("enable_benefits", false, context: %{company_id: 9}) == true
+    end
+
+    test "a key that is not a string is :not_found, not a raise" do
+      assert TConfig.put_target(:enable_benefits, value: "true", conditions: []) ==
+               {:error, :not_found}
+    end
+
+    test "keeps a given position" do
+      assert {:ok, %{position: 5}} =
+               TConfig.put_target("enable_benefits",
+                 position: 5,
+                 value: "true",
+                 conditions: [[attribute: :a, operator: :in, values: [1]]]
+               )
+    end
+  end
+
+  describe "rules the flag no longer accepts" do
+    setup do: start_cached!()
+
+    test "are not loaded after a type change, so a read gets the stored value" do
+      rule!("rate_limit", :c, [1], "250")
+
+      from(e in Entry, where: e.key == "rate_limit")
+      |> TestRepo.update_all(set: [type: "boolean", value: "true"])
+
+      log =
+        capture_log(fn ->
+          send(TConfig, :reload)
+          _ = :sys.get_state(TConfig)
+        end)
+
+      assert log =~ "no longer accepts"
+      assert TConfig.get("rate_limit", :default, context: %{c: 1}) == true
+    end
+  end
+
+  describe "reading a targeted :variant flag with get/3" do
+    setup do: start_cached!()
+
+    test "raises, as an untargeted read does" do
+      rule!("checkout_flow", :c, [1], "new_flow")
+
+      assert_raise PhoenixFlags.Error, ~r/:variant flag/, fn ->
+        TConfig.get("checkout_flow", nil, context: %{c: 1})
+      end
+    end
+  end
+
+  describe "delete_target/2" do
+    setup do: start_cached!()
+
+    test "an id that is not a UUID is :not_found" do
+      assert TConfig.delete_target("nonsense") == {:error, :not_found}
+    end
+  end
 end
