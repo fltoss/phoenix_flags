@@ -212,6 +212,16 @@ defmodule PhoenixFlags.TargetTest do
   end
 
   describe "Condition.changeset/2" do
+    test "an :eq condition takes exactly one value" do
+      changeset =
+        Condition.changeset(%Condition{}, %{attribute: "a", operator: :eq, values: [1, 2]})
+
+      assert {"must be exactly one value for eq; use in for several", _} =
+               changeset.errors[:values]
+
+      assert Condition.changeset(%Condition{}, %{attribute: "a", operator: :eq, values: [1]}).valid?
+    end
+
     defp changeset(attrs), do: Condition.changeset(%Condition{}, attrs)
 
     test "normalises atom attributes, operators and values to strings" do

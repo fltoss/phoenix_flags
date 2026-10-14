@@ -168,6 +168,30 @@ defmodule PhoenixFlags.SecretTest do
 
       assert SecretConfig.get("api_key") == "sk-uncached"
     end
+
+    test "Test.insert_entry/2 encrypts a secret, so it reads back" do
+      config = %Config{
+        otp_app: :phoenix_flags,
+        repo: TestRepo,
+        name: SecretConfig,
+        cache_enabled: false,
+        encryptor: Encryptor
+      }
+
+      start_supervised!({Server, config})
+      cleanup_persistent_term(SecretConfig)
+
+      SecretConfig.Test.insert_entry("api_key", "sk-inserted")
+
+      assert TestRepo.get_by!(Entry, key: "api_key").value == "detresni-ks"
+      assert SecretConfig.get("api_key") == "sk-inserted"
+    end
+
+    test "insert_entry/4 refuses a secret it cannot encrypt" do
+      assert_raise PhoenixFlags.Error, ~r/would be stored as plaintext/, fn ->
+        PhoenixFlags.Testing.insert_entry(TestRepo, "api_key", "sk", type: "secret")
+      end
+    end
   end
 
   describe "decrypt failure handling" do

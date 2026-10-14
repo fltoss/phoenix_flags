@@ -112,7 +112,7 @@ defmodule PhoenixFlags.Target do
   def resolve(targets, context) when is_list(targets) do
     normalised = normalise_context(context)
 
-    case Enum.find(targets, &matches?(&1, normalised)) do
+    case Enum.find(targets, &all_conditions_match?(&1, normalised)) do
       %__MODULE__{value: value} -> {:ok, value}
       nil -> :none
     end
@@ -132,18 +132,15 @@ defmodule PhoenixFlags.Target do
   @spec matches?(t(), map()) :: boolean()
   def matches?(target, context)
 
-  def matches?(%__MODULE__{conditions: conditions}, context) when is_list(conditions) do
-    context = if normalised?(context), do: context, else: normalise_context(context)
+  def matches?(target, context), do: all_conditions_match?(target, normalise_context(context))
 
+  # resolve/2 normalises the context once for the whole list, then asks this.
+  defp all_conditions_match?(%__MODULE__{conditions: conditions}, context)
+       when is_list(conditions) do
     conditions != [] and Enum.all?(conditions, &condition_matches?(&1, context))
   end
 
-  def matches?(_target, _context), do: false
-
-  # Marked so resolve/2 can normalise once for the whole list instead of once per
-  # rule, while matches?/2 stays safe to call on its own.
-  defp normalised?(%{__phoenix_flags_normalised__: true}), do: true
-  defp normalised?(_context), do: false
+  defp all_conditions_match?(_target, _context), do: false
 
   defp normalise_context(context) when is_map(context) do
     context
@@ -153,10 +150,9 @@ defmodule PhoenixFlags.Target do
         :error -> acc
       end
     end)
-    |> Map.put(:__phoenix_flags_normalised__, true)
   end
 
-  defp normalise_context(_context), do: %{__phoenix_flags_normalised__: true}
+  defp normalise_context(_context), do: %{}
 
   defp condition_matches?(
          %Condition{attribute: attribute, operator: operator, values: values},

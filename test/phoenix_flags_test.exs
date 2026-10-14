@@ -272,15 +272,22 @@ defmodule PhoenixFlags.ServerTest do
   end
 
   describe "process isolation" do
-    test "stub is not visible to other processes" do
+    test "stub is visible to a Task the test starts, as a Mox expectation is" do
       TestConfig.Test.stub("isolated_key", :my_value)
 
-      # Verify it's visible in the current process
       assert TestConfig.get("isolated_key") == :my_value
 
-      # Spawn a task and read from there — should NOT see the override
-      task = Task.async(fn -> TestConfig.get("isolated_key", :not_found) end)
-      assert Task.await(task) == :not_found
+      assert Task.await(Task.async(fn -> TestConfig.get("isolated_key", :not_found) end)) ==
+               :my_value
+    end
+
+    test "stub is not visible to a process the test did not start" do
+      TestConfig.Test.stub("isolated_key", :my_value)
+      test_pid = self()
+
+      spawn(fn -> send(test_pid, {:read, TestConfig.get("isolated_key", :not_found)}) end)
+
+      assert_receive {:read, :not_found}
     end
 
     test "stub in spawned process is not visible to parent" do

@@ -55,7 +55,7 @@ defmodule PhoenixFlags.Context do
   """
   @spec put(t() | keyword()) :: :ok
   def put(attributes) when is_list(attributes) or is_map(attributes) do
-    Process.put(@key, Map.new(attributes))
+    Process.put(@key, to_map(attributes))
 
     :ok
   end
@@ -68,7 +68,7 @@ defmodule PhoenixFlags.Context do
   """
   @spec merge(t() | keyword()) :: :ok
   def merge(attributes) when is_list(attributes) or is_map(attributes) do
-    Process.put(@key, Map.merge(get(), Map.new(attributes)))
+    Process.put(@key, Map.merge(get(), to_map(attributes)))
 
     :ok
   end
@@ -83,6 +83,11 @@ defmodule PhoenixFlags.Context do
       _other -> %{}
     end
   end
+
+  # A struct -- the current user, say -- is not enumerable, so Map.new/1 raised
+  # on the one argument a caller is most likely to pass.
+  defp to_map(%_{} = struct), do: Map.from_struct(struct)
+  defp to_map(attributes), do: Map.new(attributes)
 
   @doc """
   Removes the context from the current process.

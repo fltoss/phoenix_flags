@@ -376,7 +376,12 @@ defmodule PhoenixFlags do
               #{inspect(unquote(test_module))}.insert_entry("enable_benefits", true)
           """
           def insert_entry(key, value, opts \\ []) do
-            PhoenixFlags.Testing.insert_entry(@repo, key, value, opts)
+            PhoenixFlags.Testing.insert_entry(
+              @repo,
+              key,
+              value,
+              Keyword.put_new(opts, :instance, @parent)
+            )
           end
         end
       end
