@@ -39,7 +39,8 @@ defmodule PhoenixFlags.Target do
 
   A rule on `company_id` does not match a context without a `company_id`. It does
   not match vacuously and it does not raise — an absent attribute simply is not a
-  match, so `:not_in` on a missing attribute is `false` too.
+  match, so `:not_in` on a missing attribute is `false` too. An attribute set to
+  `nil`, or to a value `to_string/1` cannot convert, counts as missing.
   """
 
   use Ecto.Schema
@@ -184,7 +185,11 @@ defmodule PhoenixFlags.Target do
   defp compare(_operator, _value, _values), do: false
 
   # Context values are arbitrary terms from the caller, so String.Chars may not
-  # be implemented; that must not raise on a read path.
+  # be implemented, or may raise -- `to_string([:admin])` is an ArgumentError.
+  # Either way the attribute is unusable and so absent: one odd value must not
+  # switch off every rule for the caller. `nil` is absent too, or `"nil"` would
+  # match `:not_in` for a user with no company.
+  defp safe_to_string(nil), do: :error
   defp safe_to_string(term) when is_binary(term), do: {:ok, term}
   defp safe_to_string(term) when is_atom(term), do: {:ok, Atom.to_string(term)}
   defp safe_to_string(term) when is_integer(term), do: {:ok, Integer.to_string(term)}
@@ -192,6 +197,6 @@ defmodule PhoenixFlags.Target do
   defp safe_to_string(term) do
     {:ok, to_string(term)}
   rescue
-    Protocol.UndefinedError -> :error
+    _error -> :error
   end
 end
