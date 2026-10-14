@@ -742,7 +742,9 @@ defmodule PhoenixFlags.Server do
     end
   rescue
     error ->
-      Logger.error("PhoenixFlags: failed to update #{inspect(key)}: #{inspect(error)}")
+      # The exception module only: an encryptor raising FunctionClauseError
+      # carries the plaintext in its arguments.
+      Logger.error("PhoenixFlags: failed to update #{inspect(key)}: #{inspect(error.__struct__)}")
 
       changeset =
         %Entry{key: key}
@@ -1108,14 +1110,18 @@ defmodule PhoenixFlags.Server do
 
       other ->
         Logger.warning(
-          "PhoenixFlags: failed to decrypt secret #{inspect(key)}: decrypt/1 returned #{inspect(other)}"
+          "PhoenixFlags: failed to decrypt secret #{inspect(key)}: decrypt/1 returned " <>
+            "#{describe_shape(other)}, not a binary"
         )
 
         nil
     end
   rescue
     error ->
-      Logger.warning("PhoenixFlags: failed to decrypt secret #{inspect(key)}: #{inspect(error)}")
+      Logger.warning(
+        "PhoenixFlags: failed to decrypt secret #{inspect(key)}: #{inspect(error.__struct__)} raised"
+      )
+
       nil
   end
 
@@ -1137,6 +1143,16 @@ defmodule PhoenixFlags.Server do
   defp decrypted_cast_value(%Entry{value: value, type: type}, _config) do
     Entry.cast_value(value, type)
   end
+
+  # Never the value itself: an encryptor wrapping an {:ok, plaintext} API would
+  # otherwise log the secret on every cache load.
+  defp describe_shape(atom) when is_atom(atom), do: inspect(atom)
+
+  defp describe_shape(tuple)
+       when is_tuple(tuple) and tuple_size(tuple) > 0 and is_atom(elem(tuple, 0)),
+       do: "a #{tuple_size(tuple)}-tuple tagged #{inspect(elem(tuple, 0))}"
+
+  defp describe_shape(_other), do: "a non-binary term"
 
   defp store_flag_order(%Config{} = config) do
     order =
