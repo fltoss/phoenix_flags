@@ -249,7 +249,9 @@ defmodule PhoenixFlags do
       @doc """
       Updates a config entry and refreshes the cache across the cluster.
 
-      Accepts an optional `:timeout` (in milliseconds, default `5000`).
+      Accepts an optional `:timeout` (in milliseconds, default `5000`). A write
+      that takes longer returns `{:error, :timeout}` rather than exiting, and may
+      still land — read the value back to learn which.
       """
       def update_entry(key, attrs, opts \\ []) do
         PhoenixFlags.Server.update_entry(__MODULE__, key, attrs, opts)

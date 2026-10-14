@@ -440,7 +440,9 @@ defmodule PhoenixFlags.Server do
 
   When `cache_enabled: false`, runs in the caller's process for Ecto sandbox compatibility.
 
-  Accepts an optional `:timeout` (in milliseconds, default `5000`).
+  Accepts an optional `:timeout` (in milliseconds, default `5000`). A write that
+  takes longer returns `{:error, :timeout}` rather than exiting, and may still
+  land — read the value back to learn which.
   """
   def update_entry(instance, key, attrs, opts \\ [])
 
@@ -457,14 +459,24 @@ defmodule PhoenixFlags.Server do
     actor = Keyword.get(opts, :actor)
 
     if config.cache_enabled do
-      timeout = Keyword.get(opts, :timeout, 5_000)
-      GenServer.call(instance, {:update, key, attrs, actor}, timeout)
+      call_update(instance, key, attrs, actor, Keyword.get(opts, :timeout, 5_000))
     else
       case config.repo.get_by(Entry, key: key) do
         nil -> {:error, :not_found}
         entry -> update_in_caller(config, entry, attrs, actor)
       end
     end
+  end
+
+  # A caller waiting on a busy Server must not die with it: the dashboard calling
+  # here is a LiveView, and an exit takes the page down over a write that may
+  # well have landed. The late reply is dropped, as GenServer.call aliases it.
+  defp call_update(instance, key, attrs, actor, timeout) do
+    GenServer.call(instance, {:update, key, attrs, actor}, timeout)
+  catch
+    :exit, {:timeout, _} ->
+      Logger.warning("PhoenixFlags: update of #{inspect(key)} timed out after #{timeout}ms")
+      {:error, :timeout}
   end
 
   # Uncached writes run in the caller's process, so they bypass the GenServer

@@ -79,6 +79,21 @@ defmodule PhoenixFlags.CachedTest do
 
       assert CachedConfig.get("cached_bool") == false
     end
+
+    @tag :capture_log
+    test "returns {:error, :timeout} from a busy Server instead of exiting", %{server: server} do
+      :ok = :sys.suspend(server)
+
+      assert {:error, :timeout} =
+               CachedConfig.update_entry("cached_bool", %{"value" => "false"}, timeout: 50)
+
+      :ok = :sys.resume(server)
+      _ = :sys.get_state(server)
+
+      # The write still lands, and its late reply does not reach the caller.
+      assert CachedConfig.get("cached_bool") == false
+      refute_received _
+    end
   end
 
   describe "all_grouped/0 with cache enabled" do

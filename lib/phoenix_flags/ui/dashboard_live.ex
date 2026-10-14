@@ -99,8 +99,10 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
             {:ok, _entry} ->
               {:noreply, reload(socket)}
 
-            {:error, _changeset} ->
-              {:noreply, socket}
+            # A timed-out write may still have landed, so show what is stored
+            # rather than what was there before the click.
+            {:error, _reason} ->
+              {:noreply, reload(socket)}
           end
 
         _ ->
@@ -145,13 +147,14 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
         {:error, reason} ->
           # A forged event can name a key that is not in the table, and
           # update_entry/4 then returns {:error, :not_found} — not a changeset,
-          # and to_form/2 raises on it. Leave edit mode rather than taking the
-          # dashboard down.
+          # and to_form/2 raises on it; a busy Server returns {:error, :timeout}
+          # after a write that may have landed. Leave edit mode and show what is
+          # stored rather than taking the dashboard down.
           Logger.warning(
             "PhoenixFlags: dashboard could not save #{inspect(key)}: #{inspect(reason)}"
           )
 
-          {:noreply, assign(socket, :editing_key, nil)}
+          {:noreply, socket |> reload() |> assign(:editing_key, nil)}
       end
     end
 

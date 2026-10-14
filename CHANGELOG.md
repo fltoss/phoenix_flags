@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.1] - 2026-10-14
+
+### Fixed
+
+- `update_entry/3` returns `{:error, :timeout}` when the Server does not answer
+  within `:timeout`, instead of exiting the caller. The dashboard calls it from
+  its LiveView, so a slow write took the page down even when the value was
+  saved. The write may still land; the dashboard now reloads after any failed
+  toggle or save, so it shows what is stored.
+
 ## [0.10.0] - 2026-09-08
 
 ### Added
