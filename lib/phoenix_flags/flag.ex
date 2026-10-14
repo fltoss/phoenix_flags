@@ -20,7 +20,7 @@ defmodule PhoenixFlags.Flag do
   ## Fields
 
   - `:key` (required) — unique identifier for this flag
-  - `:type` (required) — one of `:boolean`, `:string`, `:integer`, `:decimal`, `:percentage`, `:select`, `:secret`.
+  - `:type` (required) — one of `:boolean`, `:string`, `:integer`, `:decimal`, `:percentage`, `:select`, `:secret`, `:variant`.
     Stored as atoms in declarations, converted to strings (`"boolean"`, etc.) for database storage.
     `:secret` values are encrypted at rest via the config's `:encryptor` module and masked in the
     admin UI and audit log. Declaring a `:secret` flag without configuring `:encryptor` raises at boot.

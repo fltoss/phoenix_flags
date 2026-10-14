@@ -178,37 +178,34 @@ defmodule PhoenixFlags.Reader do
 
   defp assign_from(_other, _key, _identity, _opts), do: nil
 
-  defp read_row(%Config{}, key, default) when not is_binary(key), do: default
-
-  defp read_row(%Config{} = config, key, default) do
-    case config.repo.get_by(Entry, key: key) do
-      # Through the same decoding as the cache, or a secret would come back as
-      # its ciphertext.
+  # Through the same decoding as the cache, or a secret would come back as its
+  # ciphertext.
+  defp read_row(config, key, default) do
+    case read_entry(config, key) do
       %Entry{} = entry -> with nil <- Values.decode(entry, config), do: default
       nil -> default
     end
-  rescue
-    DBConnection.OwnershipError ->
-      default
-
-    error ->
-      Logger.warning("PhoenixFlags: fallback read failed for #{inspect(key)}: #{inspect(error)}")
-      default
   end
 
-  defp read_variant(%Config{}, key) when not is_binary(key), do: nil
-
-  defp read_variant(%Config{} = config, key) do
-    case config.repo.get_by(Entry, key: key) do
+  defp read_variant(config, key) do
+    case read_entry(config, key) do
       %Entry{type: "variant"} = entry -> Values.decode(entry, config)
       _other -> nil
     end
+  end
+
+  # A test process without sandbox access, or a database that is down, reads
+  # as a missing row: the caller gets its default.
+  defp read_entry(%Config{}, key) when not is_binary(key), do: nil
+
+  defp read_entry(%Config{} = config, key) do
+    config.repo.get_by(Entry, key: key)
   rescue
     DBConnection.OwnershipError ->
       nil
 
     error ->
-      Logger.warning("PhoenixFlags: variant read failed for #{inspect(key)}: #{inspect(error)}")
+      Logger.warning("PhoenixFlags: read of #{inspect(key)} failed: #{inspect(error)}")
       nil
   end
 

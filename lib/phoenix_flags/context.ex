@@ -13,6 +13,11 @@ defmodule PhoenixFlags.Context do
         conn
       end
 
+  Call `put/1` on every request, signed in or not -- `PhoenixFlags.Context.put(%{})`
+  for an anonymous one. A server can handle several requests on one
+  keep-alive connection in one process, and a request that sets nothing would
+  otherwise be targeted as whoever came before it.
+
       # anywhere in the request
       MyApp.SystemConfig.get("enable_benefits", false)
 

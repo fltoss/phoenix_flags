@@ -118,7 +118,7 @@ defmodule PhoenixFlags.Targeting do
   def resolve(nil, _key, _context), do: :none
 
   def resolve({type, rules}, key, context) do
-    case resolve_with(rules, context.(), type) do
+    case resolve_with(rules, context.()) do
       {:ok, value} -> {:ok, value, type}
       :none -> :none
     end
@@ -133,17 +133,10 @@ defmodule PhoenixFlags.Targeting do
 
   # Every rule needs a condition and a missing attribute never matches, so an
   # empty context cannot match anything.
-  defp resolve_with(_rules, context, _type) when map_size(context) == 0, do: :none
+  defp resolve_with(_rules, context) when map_size(context) == 0, do: :none
 
-  defp resolve_with(rules, context, type) do
-    case Target.resolve(rules, context) do
-      # A :variant rule names a variant, which variant/4 returns as-is; casting
-      # it as a split would fail. Everything else casts like a stored value.
-      {:ok, value} when type == "variant" -> {:ok, value}
-      {:ok, value} -> {:ok, Entry.cast_value(value, type)}
-      :none -> :none
-    end
-  end
+  # Values were cast when the rules loaded, so a match is returned as it is.
+  defp resolve_with(rules, context), do: Target.resolve(rules, context)
 
   defp put_loadable(acc, config, entry, rules) do
     case loadable(config, entry, Enum.sort_by(rules, & &1.position)) do
@@ -163,8 +156,13 @@ defmodule PhoenixFlags.Targeting do
       )
     end
 
-    valid
+    Enum.map(valid, &cast_value(&1, entry.type))
   end
+
+  # Cast once, here, rather than on every read. A :variant rule names a variant,
+  # which variant/4 returns as-is; casting it as a split would fail.
+  defp cast_value(rule, "variant"), do: rule
+  defp cast_value(rule, type), do: %{rule | value: Entry.cast_value(rule.value, type)}
 
   defp valid_value?(config, entry, value) do
     Ecto.Changeset.change(%Target{value: value})
