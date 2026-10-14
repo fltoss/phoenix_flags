@@ -192,6 +192,34 @@ defmodule PhoenixFlags.ServerTest do
       assert %{value: ["must be between 0 and 100"]} = errors_on(changeset)
     end
 
+    test "rejects a NaN percentage instead of raising" do
+      TestRepo.insert!(%Entry{
+        key: "pct_val",
+        value: "50",
+        type: "percentage",
+        category: "test",
+        label: "Pct Val"
+      })
+
+      assert {:error, changeset} = TestConfig.update_entry("pct_val", %{"value" => "NaN"})
+      assert %{value: ["must be a valid number"]} = errors_on(changeset)
+
+      assert {:error, changeset} = TestConfig.update_entry("pct_val", %{"value" => "Infinity"})
+      assert %{value: ["must be between 0 and 100"]} = errors_on(changeset)
+    end
+
+    test "still accepts an infinite decimal" do
+      TestRepo.insert!(%Entry{
+        key: "dec_val",
+        value: "1.5",
+        type: "decimal",
+        category: "test",
+        label: "Dec Val"
+      })
+
+      assert {:ok, _entry} = TestConfig.update_entry("dec_val", %{"value" => "Infinity"})
+    end
+
     test "validates integer values" do
       TestRepo.insert!(%Entry{
         key: "int_val",

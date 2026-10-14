@@ -34,11 +34,17 @@ defmodule PhoenixFlags.Type do
   def validate_value("percentage", value) do
     case Decimal.parse(value) do
       {decimal, ""} ->
-        if Decimal.compare(decimal, 0) in [:gt, :eq] and
-             Decimal.compare(decimal, 100) in [:lt, :eq] do
-          :ok
-        else
-          {:error, "must be between 0 and 100"}
+        cond do
+          # `Decimal.parse/1` accepts "NaN", and `Decimal.compare/2` raises on it.
+          Decimal.nan?(decimal) ->
+            {:error, "must be a valid number"}
+
+          Decimal.compare(decimal, 0) in [:gt, :eq] and
+              Decimal.compare(decimal, 100) in [:lt, :eq] ->
+            :ok
+
+          true ->
+            {:error, "must be between 0 and 100"}
         end
 
       _ ->
