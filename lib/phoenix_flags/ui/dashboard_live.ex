@@ -23,6 +23,7 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
        socket
        |> assign(:page_title, "PhoenixFlags")
        |> assign(:config_module, config_module)
+       |> assign(:declared_keys, MapSet.new(config_module.flags(), & &1.key))
        |> assign(:actor, actor)
        |> assign(:grouped_configs, grouped)
        |> assign(:forms, build_forms(grouped))
@@ -189,6 +190,7 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
             <.config_row
               :for={entry <- entries}
               entry={entry}
+              declared={MapSet.member?(@declared_keys, entry.key)}
               select_options={@config_module.select_options(entry.key)}
               variants={@config_module.variants(entry.key)}
             />

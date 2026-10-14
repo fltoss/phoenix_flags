@@ -613,6 +613,58 @@ defmodule PhoenixFlags.Server do
     end
   end
 
+  @doc """
+  Deletes stored flags the config module no longer declares, with their
+  targeting rules, and returns the deleted keys.
+
+  Startup never deletes a row: during a rolling deploy the old and new releases
+  disagree about which flags exist. Run this once every node runs code that no
+  longer declares the flags.
+  """
+  def prune_undeclared(instance) do
+    import Ecto.Query
+
+    config = get_config(instance)
+    declared = declared_key_set(config)
+
+    keys =
+      from(e in Entry, select: e.key)
+      |> config.repo.all()
+      |> Enum.reject(&MapSet.member?(declared, &1))
+      |> Enum.sort()
+
+    if keys != [] do
+      config.repo.delete_all(from(e in Entry, where: e.key in ^keys))
+      delete_targets_for(config, keys)
+
+      Logger.info(
+        "PhoenixFlags: pruned #{length(keys)} undeclared flag(s): #{Enum.join(keys, ", ")}"
+      )
+
+      reload_everywhere(config)
+    end
+
+    keys
+  end
+
+  # The targets table arrives with migration V4; an app that has not run it has
+  # no rules to delete.
+  defp delete_targets_for(config, keys) do
+    import Ecto.Query
+
+    config.repo.delete_all(from(t in PhoenixFlags.Target, where: t.key in ^keys))
+  rescue
+    error ->
+      Logger.warning("PhoenixFlags: could not delete targeting rules: #{inspect(error)}")
+  end
+
+  defp reload_everywhere(%Config{cache_enabled: true, name: name} = config) do
+    send(name, :reload)
+    notify_peers(config)
+  end
+
+  defp reload_everywhere(%Config{}), do: :ok
+
   # ============================================================================
   # GenServer Callbacks
   # ============================================================================
@@ -767,7 +819,7 @@ defmodule PhoenixFlags.Server do
       do_seed_updates(config, declared_by_key, declared_keys, existing_by_key, existing_keys) or
         changed?
 
-    changed? = do_seed_deletes(config, declared_keys, existing_keys) or changed?
+    log_undeclared(existing_keys, declared_keys)
 
     if changed?, do: notify_peers(config)
   rescue
@@ -822,7 +874,7 @@ defmodule PhoenixFlags.Server do
 
           metadata_changes =
             cond do
-              type_changed? ->
+              type_changed? and not value_survives_retype?(config, declared, existing) ->
                 Map.put(metadata_changes, :value, Map.get(declared, :value, ""))
 
               variant_set_changed?(declared, existing) ->
@@ -878,26 +930,39 @@ defmodule PhoenixFlags.Server do
     )
   end
 
-  defp do_seed_deletes(config, declared_keys, existing_keys) do
-    keys_to_remove = MapSet.difference(existing_keys, declared_keys)
+  # Rows the running code does not declare are left alone. In a rolling deploy
+  # the old and new releases disagree about which flags exist, and an old node
+  # restarting mid-deploy used to delete a flag the new code had just added —
+  # value and all. They are reported here and removed by prune_undeclared/1.
+  defp log_undeclared(existing_keys, declared_keys) do
+    case existing_keys |> MapSet.difference(declared_keys) |> Enum.sort() do
+      [] ->
+        :ok
 
-    if MapSet.size(keys_to_remove) > 0 do
-      import Ecto.Query
+      undeclared ->
+        Logger.info(
+          "PhoenixFlags: #{length(undeclared)} stored flag(s) are not declared and were kept: " <>
+            "#{Enum.join(undeclared, ", ")}. prune_undeclared/0 deletes them."
+        )
+    end
+  end
 
-      keys_list = MapSet.to_list(keys_to_remove)
+  # A type change keeps the stored value when it is still valid for the new
+  # type, so a rolling deploy flipping the type back and forth does not reset a
+  # value both types accept. A secret on either side always resets: ciphertext
+  # is not a value, and a plaintext value must not be read as ciphertext.
+  defp value_survives_retype?(_config, %{type: "secret"}, _existing), do: false
+  defp value_survives_retype?(_config, _declared, %Entry{type: "secret"}), do: false
+  defp value_survives_retype?(_config, _declared, %Entry{value: nil}), do: false
 
-      Entry
-      |> where([e], e.key in ^keys_list)
-      |> config.repo.delete_all()
-
-      Logger.info(
-        "PhoenixFlags: removed #{MapSet.size(keys_to_remove)} stale flag(s): #{Enum.join(keys_list, ", ")}"
+  defp value_survives_retype?(config, %{type: type, key: key}, %Entry{value: value}) do
+    changeset =
+      Entry.changeset(%Entry{key: key, type: type}, %{"value" => value},
+        select_options: select_options(config, key),
+        variants: variant_names(config, key)
       )
 
-      true
-    else
-      false
-    end
+    changeset.valid?
   end
 
   defp maybe_change(changes, _field, same, same), do: changes
@@ -1161,7 +1226,8 @@ defmodule PhoenixFlags.Server do
   end
 
   # Two config modules with *different* flag declarations sharing one repo
-  # would delete each other's rows at seed time (undeclared keys are removed).
+  # would fight over the same rows: each resets the metadata the other declares,
+  # and prune_undeclared/1 on one deletes the other's flags.
   # Same declarations are allowed — that's the normal multi-node cluster
   # scenario exercised with two local instances in tests.
   defp claim_repo!(%Config{repo: repo, name: name} = config) do
@@ -1188,8 +1254,8 @@ defmodule PhoenixFlags.Server do
             raise PhoenixFlags.Error,
                   "#{inspect(name)} and #{inspect(other)} both use repo #{inspect(repo)} " <>
                     "but declare different flags. PhoenixFlags stores all flags in one " <>
-                    "system_flags table and removes undeclared keys at startup, so two " <>
-                    "config modules on the same repo would delete each other's flags. " <>
+                    "system_flags table, so two config modules on the same repo would " <>
+                    "overwrite each other's flags. " <>
                     "Use one config module per repo."
         end
     end

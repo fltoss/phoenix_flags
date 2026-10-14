@@ -265,6 +265,16 @@ defmodule PhoenixFlags do
       end
 
       @doc """
+      Deletes stored flags this module no longer declares, with their targeting
+      rules, and returns the deleted keys. Startup never deletes a row, because
+      during a rolling deploy the releases disagree about which flags exist — run
+      this once no node declares them.
+      """
+      def prune_undeclared do
+        PhoenixFlags.Server.prune_undeclared(__MODULE__)
+      end
+
+      @doc """
       Returns all audit log entries, newest first.
 
       Raises `PhoenixFlags.Error` unless `audit: true` is set.

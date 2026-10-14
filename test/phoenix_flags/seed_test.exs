@@ -68,7 +68,7 @@ defmodule PhoenixFlags.SeedTest do
       assert entry.value == "true"
     end
 
-    test "removes flags no longer declared" do
+    test "keeps flags no longer declared, so a rolling deploy cannot delete them" do
       TestRepo.insert!(%Entry{
         key: "stale_flag",
         value: "old",
@@ -82,7 +82,7 @@ defmodule PhoenixFlags.SeedTest do
           %{key: "active_flag", type: "boolean", value: "true", category: "test", label: "Active"}
         ])
 
-      refute TestRepo.get_by(Entry, key: "stale_flag")
+      assert TestRepo.get_by(Entry, key: "stale_flag").value == "old"
       assert TestRepo.get_by(Entry, key: "active_flag")
     end
 
@@ -221,11 +221,11 @@ defmodule PhoenixFlags.SeedTest do
 
       {_module, _config} = start_server!([])
 
-      # Empty flags means remove everything
-      refute TestRepo.get_by(Entry, key: "orphan")
+      # Startup never deletes; prune_undeclared/1 does
+      assert TestRepo.get_by(Entry, key: "orphan")
     end
 
-    test "handles mixed operations: insert, update, and delete" do
+    test "handles mixed operations: insert, update, and keep" do
       # Will be kept (metadata updated)
       TestRepo.insert!(%Entry{
         key: "keep_me",
@@ -235,7 +235,7 @@ defmodule PhoenixFlags.SeedTest do
         label: "Old Label"
       })
 
-      # Will be removed
+      # Not declared, so kept
       TestRepo.insert!(%Entry{
         key: "remove_me",
         value: "bye",
@@ -264,13 +264,50 @@ defmodule PhoenixFlags.SeedTest do
       assert kept.category == "new"
       assert kept.value == "original"
 
-      # Removed
-      refute TestRepo.get_by(Entry, key: "remove_me")
+      # Kept
+      assert TestRepo.get_by(Entry, key: "remove_me")
 
       # Added
       added = TestRepo.get_by(Entry, key: "add_me")
       assert added.value == "true"
       assert added.type == "boolean"
+    end
+
+    test "keeps the value on a type change when the new type accepts it" do
+      TestRepo.insert!(%Entry{
+        key: "still_valid",
+        value: "5",
+        type: "string",
+        category: "test",
+        label: "Still valid"
+      })
+
+      start_server!([
+        %{key: "still_valid", type: "integer", value: "0", category: "test", label: "Still valid"}
+      ])
+
+      entry = TestRepo.get_by(Entry, key: "still_valid")
+      assert entry.type == "integer"
+      assert entry.value == "5"
+    end
+
+    test "a rolling deploy flipping the type back keeps a value both types accept" do
+      TestRepo.insert!(%Entry{
+        key: "flip",
+        value: "7",
+        type: "integer",
+        category: "test",
+        label: "Flip"
+      })
+
+      new_release = [%{key: "flip", type: "string", value: "", category: "test", label: "Flip"}]
+      old_release = [%{key: "flip", type: "integer", value: "0", category: "test", label: "Flip"}]
+
+      {_module, _config} = start_server!(new_release)
+      stop_supervised!(Server)
+      {_module, _config} = start_server!(old_release)
+
+      assert TestRepo.get_by(Entry, key: "flip").value == "7"
     end
 
     test "works with Flag structs" do
@@ -390,6 +427,35 @@ defmodule PhoenixFlags.SeedTest do
 
       GenServer.stop(pid1)
       GenServer.stop(pid2)
+    end
+  end
+
+  describe "prune_undeclared/1" do
+    test "deletes stored flags and their rules that the code no longer declares" do
+      TestRepo.insert!(%Entry{
+        key: "gone",
+        value: "x",
+        type: "string",
+        category: "t",
+        label: "Gone"
+      })
+
+      TestRepo.insert!(%PhoenixFlags.Target{
+        key: "gone",
+        value: "y",
+        conditions: [
+          %PhoenixFlags.Target.Condition{attribute: "a", operator: "in", values: ["1"]}
+        ]
+      })
+
+      {module, _config} =
+        start_server!([%{key: "kept", type: "string", value: "", category: "t", label: "Kept"}])
+
+      assert Server.prune_undeclared(module) == ["gone"]
+      refute TestRepo.get_by(Entry, key: "gone")
+      assert TestRepo.get_by(Entry, key: "kept")
+      assert TestRepo.all(PhoenixFlags.Target) == []
+      assert Server.prune_undeclared(module) == []
     end
   end
 

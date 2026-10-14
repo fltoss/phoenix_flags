@@ -216,6 +216,12 @@
   max-width: 500px;
 }
 
+.pf-row-undeclared {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--pf-error-text);
+}
+
 .pf-row-actions {
   display: flex;
   align-items: center;

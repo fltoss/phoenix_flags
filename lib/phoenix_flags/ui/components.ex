@@ -8,11 +8,12 @@ if Code.ensure_loaded?(Phoenix.Component) do
     attr(:entry, :map, required: true)
     attr(:select_options, :list, default: [])
     attr(:variants, :list, default: [])
+    attr(:declared, :boolean, default: true)
 
     def config_row(%{entry: %{type: "boolean"}} = assigns) do
       ~H"""
       <div class="pf-row">
-        <.entry_info entry={@entry} />
+        <.entry_info entry={@entry} declared={@declared} />
         <div class="pf-row-actions">
           <button
             type="button"
@@ -35,7 +36,7 @@ if Code.ensure_loaded?(Phoenix.Component) do
     def config_row(%{entry: %{type: "secret"}} = assigns) do
       ~H"""
       <div class="pf-row">
-        <.entry_info entry={@entry} />
+        <.entry_info entry={@entry} declared={@declared} />
         <div class="pf-row-actions">
           <span class="pf-row-value">{if @entry.value == "", do: "Not set", else: "Set"}</span>
           <button phx-click="pf-edit" phx-value-key={@entry.key} class="pf-row-edit-btn">
@@ -49,7 +50,7 @@ if Code.ensure_loaded?(Phoenix.Component) do
     def config_row(%{entry: %{type: "variant"}} = assigns) do
       ~H"""
       <div class="pf-row">
-        <.entry_info entry={@entry} />
+        <.entry_info entry={@entry} declared={@declared} />
         <div class="pf-row-actions">
           <.variant_bars entry={@entry} variants={@variants} />
           <button phx-click="pf-edit" phx-value-key={@entry.key} class="pf-row-edit-btn">
@@ -63,7 +64,7 @@ if Code.ensure_loaded?(Phoenix.Component) do
     def config_row(assigns) do
       ~H"""
       <div class="pf-row">
-        <.entry_info entry={@entry} />
+        <.entry_info entry={@entry} declared={@declared} />
         <div class="pf-row-actions">
           <span class="pf-row-value">{display_value(@entry, @select_options)}</span>
           <button phx-click="pf-edit" phx-value-key={@entry.key} class="pf-row-edit-btn">
@@ -274,6 +275,10 @@ if Code.ensure_loaded?(Phoenix.Component) do
       <div class="pf-row-info">
         <p class="pf-row-label">{@entry.label}</p>
         <p :if={@entry.description} class="pf-row-desc">{@entry.description}</p>
+        <p :if={!@declared} class="pf-row-undeclared">
+          No longer declared in code. Kept so a rolling deploy cannot lose it;
+          <code>prune_undeclared/0</code> deletes it.
+        </p>
       </div>
       """
     end
