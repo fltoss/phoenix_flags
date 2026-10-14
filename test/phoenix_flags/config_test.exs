@@ -37,5 +37,18 @@ defmodule PhoenixFlags.ConfigTest do
         Config.new!(@valid_opts ++ [refresh_interval: -5])
       end
     end
+
+    test "raises on an option of the wrong shape rather than taking it at face value" do
+      for {option, value, expected} <- [
+            {:audit, "true", "a boolean"},
+            {:cache_enabled, "false", "a boolean"},
+            {:actor_fn, fn -> "me" end, "a 1-arity function"},
+            {:encryptor, "MyEncryptor", "a module"}
+          ] do
+        assert_raise PhoenixFlags.Error, ~r/:#{option} must be #{expected}/, fn ->
+          Config.new!(@valid_opts ++ [{option, value}])
+        end
+      end
+    end
   end
 end

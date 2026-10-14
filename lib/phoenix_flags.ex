@@ -65,32 +65,35 @@ defmodule PhoenixFlags do
 
   @doc false
   defmacro __before_compile__(env) do
-    validate_encryptor_present!(env)
+    warn_without_encryptor(env)
     validate_unique_keys!(env)
 
-    quote do
-      # Built once here: every lookup by key, on the read path and on every
-      # render of the dashboard, is then a map access rather than a list scan.
-      @phoenix_flags_ordered Enum.reverse(@phoenix_flags)
-      @phoenix_flags_by_key Map.new(@phoenix_flags_ordered, &{&1.key, &1})
+    flags = env.module |> Module.get_attribute(:phoenix_flags) |> List.wrap() |> Enum.reverse()
 
+    # One clause per declared key and a catch-all, built here rather than a
+    # lookup into a literal map: the type checker reads a literal map exactly,
+    # and warned -- in the host app -- about lookups it could prove empty.
+    flag_clauses = clauses(:__flag__, Enum.map(flags, &{&1.key, &1}))
+    option_clauses = clauses(:select_options, Enum.flat_map(flags, &declared_options/1))
+    variant_clauses = clauses(:variants, Enum.flat_map(flags, &declared_variants/1))
+
+    quote do
       @doc """
       Returns the list of declared flags. Generated from `flag/2` macro calls.
       """
-      def flags, do: @phoenix_flags_ordered
+      def flags, do: unquote(Macro.escape(flags))
 
       @doc false
-      def __flag__(key), do: Map.get(@phoenix_flags_by_key, key)
+      def __flag__(key)
+      unquote_splicing(flag_clauses)
+      def __flag__(_key), do: nil
 
       @doc """
       Returns `{label, value}` options for a `:select` flag, or `[]` if not a select.
       """
-      def select_options(key) do
-        case __flag__(key) do
-          %PhoenixFlags.Flag{options: options} when is_list(options) -> options
-          _ -> []
-        end
-      end
+      def select_options(key)
+      unquote_splicing(option_clauses)
+      def select_options(_key), do: []
 
       @doc """
       Returns the declared `{label, value, weight}` variants for a `:variant`
@@ -99,14 +102,24 @@ defmodule PhoenixFlags do
       These are the *declared* weights. The live split is whatever is stored in
       the database, which the dashboard can change at runtime.
       """
-      def variants(key) do
-        case __flag__(key) do
-          %PhoenixFlags.Flag{type: :variant, variants: variants} when is_list(variants) ->
-            variants
+      def variants(key)
+      unquote_splicing(variant_clauses)
+      def variants(_key), do: []
+    end
+  end
 
-          _ ->
-            []
-        end
+  defp declared_options(%{key: key, options: [_ | _] = options}), do: [{key, options}]
+  defp declared_options(_flag), do: []
+
+  defp declared_variants(%{key: key, type: :variant, variants: [_ | _] = variants}),
+    do: [{key, variants}]
+
+  defp declared_variants(_flag), do: []
+
+  defp clauses(name, pairs) do
+    for {key, value} <- pairs do
+      quote do
+        def unquote(name)(unquote(key)), do: unquote(Macro.escape(value))
       end
     end
   end
@@ -128,17 +141,28 @@ defmodule PhoenixFlags do
     end
   end
 
-  # `:secret` flags are meaningless without an encryptor, and the failure would
-  # otherwise only surface at runtime on the first read.
-  defp validate_encryptor_present!(env) do
+  # `:secret` flags are meaningless without an encryptor. The Server refuses to
+  # start without one; this says so at compile time too. A warning, not an
+  # error: the encryptor may be configured in runtime.exs, which a compile
+  # cannot see -- and Config documents app env as a source of it.
+  defp warn_without_encryptor(env) do
     declared_flags = Module.get_attribute(env.module, :phoenix_flags) || []
-    encryptor_set? = Module.get_attribute(env.module, :phoenix_flags_encryptor_set?) || false
     secret_flags = for flag <- declared_flags, flag.type == :secret, do: flag.key
+    in_options? = Module.get_attribute(env.module, :phoenix_flags_encryptor_set?) || false
 
-    if secret_flags != [] and not encryptor_set? do
-      raise PhoenixFlags.Error,
-            "#{inspect(env.module)} declares :secret flags #{inspect(secret_flags)} but no :encryptor was passed to `use PhoenixFlags`. " <>
-              "Add `encryptor: MyApp.MyEncryptor` (a module exporting encrypt/1 and decrypt/1) or remove the :secret flags."
+    in_app_env? =
+      env.module
+      |> Module.get_attribute(:otp_app)
+      |> Application.get_env(env.module, [])
+      |> Keyword.has_key?(:encryptor)
+
+    if secret_flags != [] and not in_options? and not in_app_env? do
+      IO.warn(
+        "#{inspect(env.module)} declares :secret flags #{inspect(secret_flags)} but no :encryptor " <>
+          "was passed to `use PhoenixFlags` or configured for it. It will refuse to start unless " <>
+          "one is configured by then (a module exporting encrypt/1 and decrypt/1).",
+        Macro.Env.stacktrace(env)
+      )
     end
   end
 

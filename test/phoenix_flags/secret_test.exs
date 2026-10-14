@@ -275,7 +275,7 @@ defmodule PhoenixFlags.SecretTest do
   end
 
   describe "compile-time encryptor validation" do
-    test "raises when a :secret flag is declared and :encryptor is omitted" do
+    test "warns when a :secret flag is declared and no :encryptor is configured" do
       source = """
       defmodule PhoenixFlags.SecretTest.MissingEncryptor do
         use PhoenixFlags,
@@ -286,9 +286,29 @@ defmodule PhoenixFlags.SecretTest do
       end
       """
 
-      assert_raise PhoenixFlags.Error, ~r/declares :secret flags .* but no :encryptor/, fn ->
-        Code.compile_string(source)
+      warning = ExUnit.CaptureIO.capture_io(:stderr, fn -> Code.compile_string(source) end)
+
+      assert warning =~ ~r/declares :secret flags .* but no :encryptor/
+    end
+
+    test "does not warn when the encryptor comes from app env" do
+      Application.put_env(:phoenix_flags, PhoenixFlags.SecretTest.EnvEncryptor,
+        encryptor: PhoenixFlags.SecretTest.Encryptor
+      )
+
+      on_exit(fn ->
+        Application.delete_env(:phoenix_flags, PhoenixFlags.SecretTest.EnvEncryptor)
+      end)
+
+      source = """
+      defmodule PhoenixFlags.SecretTest.EnvEncryptor do
+        use PhoenixFlags, otp_app: :phoenix_flags, repo: PhoenixFlags.TestRepo
+
+        flag "api_key", type: :secret
       end
+      """
+
+      assert ExUnit.CaptureIO.capture_io(:stderr, fn -> Code.compile_string(source) end) == ""
     end
 
     test "compiles when :encryptor is provided" do
