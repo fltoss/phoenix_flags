@@ -48,7 +48,7 @@ Add `phoenix_flags` to your dependencies in `mix.exs`:
 ```elixir
 def deps do
   [
-    {:phoenix_flags, "~> 0.6"}
+    {:phoenix_flags, "~> 0.10"}
   ]
 end
 ```
