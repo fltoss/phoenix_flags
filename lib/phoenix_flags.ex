@@ -66,6 +66,7 @@ defmodule PhoenixFlags do
   @doc false
   defmacro __before_compile__(env) do
     validate_encryptor_present!(env)
+    validate_unique_keys!(env)
 
     quote do
       @doc """
@@ -101,6 +102,23 @@ defmodule PhoenixFlags do
             []
         end
       end
+    end
+  end
+
+  # Each consumer of flags/0 resolved a duplicate differently -- the seed insert
+  # kept the first, the metadata update the last, option validation the first --
+  # so the stored type and the validation could disagree from one boot to the next.
+  defp validate_unique_keys!(env) do
+    keys = env.module |> Module.get_attribute(:phoenix_flags) |> List.wrap() |> Enum.map(& &1.key)
+
+    case Enum.uniq(keys -- Enum.uniq(keys)) do
+      [] ->
+        :ok
+
+      duplicates ->
+        raise PhoenixFlags.Error,
+              "#{inspect(env.module)} declares #{inspect(duplicates)} more than once. " <>
+                "Each flag key must be declared once."
     end
   end
 
