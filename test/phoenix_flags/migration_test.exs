@@ -50,6 +50,27 @@ defmodule PhoenixFlags.MigrationTest do
     def down, do: PhoenixFlags.Migration.down(version: 4, prefix: "pf_migration_test")
   end
 
+  defmodule UpTwice do
+    use Ecto.Migration
+
+    def up do
+      PhoenixFlags.Migration.up(version: 2, prefix: "pf_migration_test")
+      PhoenixFlags.Migration.up(version: 4, prefix: "pf_migration_test")
+    end
+
+    def down, do: PhoenixFlags.Migration.down(version: 1, prefix: "pf_migration_test")
+  end
+
+  defmodule MixedCasePrefix do
+    use Ecto.Migration
+
+    def up, do: PhoenixFlags.Migration.up(version: 4, prefix: "PfMixedCase")
+    def down, do: PhoenixFlags.Migration.down(version: 1, prefix: "PfMixedCase")
+  end
+
+  @up_twice_migration 100_000_000_000_001
+  @mixed_case_migration 100_000_000_000_002
+
   setup do
     start_supervised!(
       {TestRepo, name: @migration_repo, pool: DBConnection.ConnectionPool, pool_size: 2}
@@ -168,11 +189,92 @@ defmodule PhoenixFlags.MigrationTest do
     reset_migration_state()
   end
 
+  test "calling up/1 twice in one migration does not run V1 again" do
+    TestRepo.query!("CREATE SCHEMA #{@prefix}")
+    opts = [log: false, dynamic_repo: @migration_repo]
+
+    assert [_] =
+             Ecto.Migrator.run(
+               TestRepo,
+               [{@up_twice_migration, UpTwice}],
+               :up,
+               [all: true] ++ opts
+             )
+
+    assert meta_version() == 4
+
+    reset_migration_state()
+  end
+
+  test "a mixed-case prefix is quoted, so the version is read back" do
+    TestRepo.query!(~s(DROP SCHEMA IF EXISTS "PfMixedCase" CASCADE))
+    TestRepo.query!(~s(CREATE SCHEMA "PfMixedCase"))
+    opts = [log: false, dynamic_repo: @migration_repo]
+
+    assert [_] =
+             Ecto.Migrator.run(
+               TestRepo,
+               [{@mixed_case_migration, MixedCasePrefix}],
+               :up,
+               [all: true] ++ opts
+             )
+
+    assert %{rows: [["4"]]} =
+             TestRepo.query!(
+               ~s(SELECT value FROM "PfMixedCase".system_flags_meta WHERE key = 'schema_version')
+             )
+
+    assert [_] =
+             Ecto.Migrator.run(
+               TestRepo,
+               [{@mixed_case_migration, MixedCasePrefix}],
+               :down,
+               [all: true] ++ opts
+             )
+
+    TestRepo.query!(~s(DROP SCHEMA IF EXISTS "PfMixedCase" CASCADE))
+    reset_migration_state()
+  end
+
+  test "a lost version comment is inferred from the tables, not read as version 0" do
+    TestRepo.query!("CREATE SCHEMA #{@prefix}")
+    opts = [log: false, dynamic_repo: @migration_repo]
+
+    assert [_] =
+             Ecto.Migrator.run(
+               TestRepo,
+               [{@initial_migration, InitialToV2}],
+               :up,
+               [all: true] ++ opts
+             )
+
+    TestRepo.query!("COMMENT ON TABLE #{@prefix}.system_flags IS NULL")
+
+    assert [_] =
+             Ecto.Migrator.run(
+               TestRepo,
+               [{@upgrade_migration, UpgradeToV3}],
+               :up,
+               [all: true] ++ opts
+             )
+
+    assert meta_version() == 3
+
+    reset_migration_state()
+  end
+
   defp reset_migration_state do
     TestRepo.query!("DROP SCHEMA IF EXISTS #{@prefix} CASCADE")
 
     TestRepo.query!("DELETE FROM schema_migrations WHERE version = ANY($1)", [
-      [@initial_migration, @v2_migration, @upgrade_migration]
+      [
+        @initial_migration,
+        @v2_migration,
+        @upgrade_migration,
+        @v4_migration,
+        @up_twice_migration,
+        @mixed_case_migration
+      ]
     ])
   end
 
