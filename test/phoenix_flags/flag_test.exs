@@ -159,6 +159,51 @@ defmodule PhoenixFlags.FlagTest do
         Flag.new!(key: "rate", type: :percentage)
       end
     end
+
+    test "raises on a field longer than its 255-character column" do
+      for field <- [:key, :label, :category, :description] do
+        assert_raise PhoenixFlags.Error, ~r/:#{field} must be at most 255 characters/, fn ->
+          Flag.new!(
+            Keyword.merge([key: "k", type: :string], [{field, String.duplicate("é", 256)}])
+          )
+        end
+      end
+
+      assert Flag.new!(key: "k", type: :string, description: String.duplicate("é", 255))
+    end
+
+    test "raises on a field that is not a string" do
+      assert_raise PhoenixFlags.Error, ~r/:label must be a string/, fn ->
+        Flag.new!(key: "k", type: :string, label: :oops)
+      end
+    end
+
+    test "raises PhoenixFlags.Error, not FunctionClauseError, on a non-string default" do
+      assert_raise PhoenixFlags.Error, ~r/:default must be a string.*"5"/, fn ->
+        Flag.new!(key: "k", type: :integer, default: 5)
+      end
+    end
+
+    test "raises on a variant name that would not survive being stored" do
+      for name <- [" a", "a ", "a,b", "a=b"] do
+        assert_raise PhoenixFlags.Error, ~r/variant name/, fn ->
+          Flag.new!(key: "k", type: :variant, variants: [{"A", name, 50}, {"B", "b", 50}])
+        end
+      end
+    end
+  end
+
+  describe "use PhoenixFlags" do
+    test "refuses a key declared twice" do
+      assert_raise PhoenixFlags.Error, ~r/declares \["twice"\] more than once/, fn ->
+        defmodule DuplicateKeys do
+          use PhoenixFlags, otp_app: :phoenix_flags, repo: PhoenixFlags.TestRepo
+
+          flag("twice", type: :boolean, default: "false")
+          flag("twice", type: :string)
+        end
+      end
+    end
   end
 
   describe "to_seed_map/1" do

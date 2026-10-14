@@ -40,7 +40,10 @@ defmodule PhoenixFlags.Migration do
   # Version that introduced the system_flags_meta table. From this version on
   # the schema version lives in that table; below it, in the table comment.
   @meta_version 3
-  @prefix_pattern ~r/^[a-z_][a-z0-9_]*$/
+  # Any name Postgres takes as a quoted identifier, short of a double quote.
+  # Ecto quotes the prefix when it creates the tables, so the raw SQL here
+  # quotes it too: a mixed-case schema is "MySchema", not myschema.
+  @prefix_pattern ~r/\A[^"\x00]{1,63}\z/
 
   @doc """
   Runs migrations up to the specified version (or the latest).
@@ -59,6 +62,7 @@ defmodule PhoenixFlags.Migration do
       end
 
       set_version(prefix, version)
+      remember_queued(prefix, version)
     end
   end
 
@@ -83,6 +87,8 @@ defmodule PhoenixFlags.Migration do
       if version >= @initial_version do
         set_version(prefix, version)
       end
+
+      remember_queued(prefix, max(version, 0))
     end
   end
 
@@ -96,8 +102,38 @@ defmodule PhoenixFlags.Migration do
   def migrated_version(prefix \\ "public") do
     validate_prefix!(prefix)
 
-    read_meta_version(prefix) || read_comment_version(prefix) || 0
+    queued_version(prefix) || read_meta_version(prefix) || read_comment_version(prefix) ||
+      infer_version(prefix) || 0
   end
+
+  # Migration commands are queued and only run when the host migration ends, so
+  # a second up/1 in the same migration read the old version and queued V01
+  # again. The version just queued is remembered for the rest of the process.
+  defp remember_queued(prefix, version), do: Process.put({__MODULE__, repo(), prefix}, version)
+  defp queued_version(prefix), do: Process.get({__MODULE__, repo(), prefix})
+
+  # Below V3 the version is a table comment, which a DBA's own COMMENT ON TABLE
+  # or a pg_dump --no-comments loses -- and version 0 would re-create tables
+  # that exist. With nothing recorded, the tables present say how far it got.
+  defp infer_version(prefix) do
+    [
+      {4, "system_flag_targets"},
+      {3, "system_flags_meta"},
+      {2, "system_flags_audit"},
+      {1, "system_flags"}
+    ]
+    |> Enum.find_value(fn {version, table} -> if table_exists?(prefix, table), do: version end)
+  end
+
+  defp table_exists?(prefix, table) do
+    match?(
+      {:ok, %{rows: [[true]]}},
+      repo().query("SELECT to_regclass($1) IS NOT NULL", [qualified(prefix, table)])
+    )
+  end
+
+  @doc false
+  def qualified(prefix, table), do: ~s("#{prefix}".#{table})
 
   @doc false
   def current_version, do: @current_version
@@ -105,11 +141,10 @@ defmodule PhoenixFlags.Migration do
   # Existence is probed via to_regclass instead of just querying the table:
   # a failed query would abort the surrounding migration transaction.
   defp read_meta_version(prefix) do
-    with {:ok, %{rows: [[true]]}} <-
-           repo().query("SELECT to_regclass($1) IS NOT NULL", ["#{prefix}.system_flags_meta"]),
+    with true <- table_exists?(prefix, "system_flags_meta"),
          {:ok, %{rows: [[version]]}} <-
            repo().query(
-             "SELECT value FROM #{prefix}.system_flags_meta WHERE key = 'schema_version'"
+             "SELECT value FROM #{qualified(prefix, "system_flags_meta")} WHERE key = 'schema_version'"
            ) do
       parse_version(version)
     else
@@ -148,21 +183,21 @@ defmodule PhoenixFlags.Migration do
   # V03 creates it earlier in the same command queue.
   defp set_version(prefix, version) when is_integer(version) and version >= @meta_version do
     execute("""
-    INSERT INTO #{prefix}.system_flags_meta (key, value)
+    INSERT INTO #{qualified(prefix, "system_flags_meta")} (key, value)
     VALUES ('schema_version', '#{version}')
     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
     """)
   end
 
   defp set_version(prefix, version) when is_integer(version) do
-    execute("COMMENT ON TABLE #{prefix}.system_flags IS '#{version}'")
+    execute("COMMENT ON TABLE #{qualified(prefix, "system_flags")} IS '#{version}'")
   end
 
   defp validate_prefix!(prefix) do
     unless Regex.match?(@prefix_pattern, prefix) do
       raise ArgumentError,
             "PhoenixFlags.Migration: invalid prefix #{inspect(prefix)}, " <>
-              "must match #{inspect(@prefix_pattern)}"
+              "it must be 1 to 63 characters with no double quote"
     end
   end
 end

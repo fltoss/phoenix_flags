@@ -6,6 +6,12 @@ defmodule PhoenixFlags.EntryTest do
   alias PhoenixFlags.Entry
 
   describe "cast_value/2" do
+    @tag :capture_log
+    test "a percentage out of range does not load, as a save would refuse it" do
+      assert Entry.cast_value("150", "percentage") == nil
+      assert Entry.cast_value("NaN", "decimal") == nil
+    end
+
     test "nil stays nil for every type" do
       for type <- ~w(string boolean integer decimal percentage select secret) do
         assert Entry.cast_value(nil, type) == nil
@@ -67,11 +73,40 @@ defmodule PhoenixFlags.EntryTest do
       assert changeset.changes == %{value: "new"}
     end
 
-    test "treats \"\" as missing for non-secret types" do
-      changeset = Entry.changeset(entry("string", "old"), %{"value" => ""})
+    test "treats \"\" as missing for a type with no empty value" do
+      changeset = Entry.changeset(entry("integer", "5"), %{"value" => ""})
 
       refute changeset.valid?
       assert {"can't be blank", _} = changeset.errors[:value]
+    end
+
+    test "accepts \"\" for a string, which could otherwise never be cleared" do
+      changeset = Entry.changeset(entry("string", "old"), %{"value" => ""})
+
+      assert changeset.valid?
+      assert changeset.changes == %{value: ""}
+    end
+
+    test "accepts \"\" for a select only when it is a declared option" do
+      assert Entry.changeset(entry("select", "a"), %{"value" => ""},
+               select_options: [{"None", ""}, {"A", "a"}]
+             ).valid?
+
+      refute Entry.changeset(entry("select", "a"), %{"value" => ""}, select_options: [{"A", "a"}]).valid?
+    end
+
+    test "rejects NaN for a decimal or a percentage, which raises on comparison" do
+      for type <- ~w(decimal percentage) do
+        changeset = Entry.changeset(entry(type, "1"), %{"value" => "NaN"})
+        assert {"must be a valid number", _} = changeset.errors[:value], type
+      end
+    end
+
+    test "an infinite decimal is a value; an infinite percentage is out of range" do
+      assert Entry.changeset(entry("decimal", "1"), %{"value" => "Infinity"}).valid?
+
+      changeset = Entry.changeset(entry("percentage", "1"), %{"value" => "-Infinity"})
+      assert {"must be between 0 and 100", _} = changeset.errors[:value]
     end
 
     test "accepts \"\" for a secret, as the way to clear it" do

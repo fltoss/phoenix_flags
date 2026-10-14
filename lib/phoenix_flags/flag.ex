@@ -20,7 +20,7 @@ defmodule PhoenixFlags.Flag do
   ## Fields
 
   - `:key` (required) — unique identifier for this flag
-  - `:type` (required) — one of `:boolean`, `:string`, `:integer`, `:decimal`, `:percentage`, `:select`, `:secret`.
+  - `:type` (required) — one of `:boolean`, `:string`, `:integer`, `:decimal`, `:percentage`, `:select`, `:secret`, `:variant`.
     Stored as atoms in declarations, converted to strings (`"boolean"`, etc.) for database storage.
     `:secret` values are encrypted at rest via the config's `:encryptor` module and masked in the
     admin UI and audit log. Declaring a `:secret` flag without configuring `:encryptor` raises at boot.
@@ -85,7 +85,12 @@ defmodule PhoenixFlags.Flag do
       end
 
     validate_key!(flag.key)
+    validate_text!(:key, flag.key)
+    validate_text!(:label, flag.label)
+    validate_text!(:category, flag.category)
+    validate_text!(:description, flag.description)
     validate_type!(flag.type)
+    validate_default_is_string!(flag.default)
     validate_options!(flag.type, flag.options)
     validate_variants!(flag.type, flag.variants)
     validate_variant_only!(flag.type, :ttl, flag.ttl)
@@ -111,6 +116,41 @@ defmodule PhoenixFlags.Flag do
   defp validate_key!(key) do
     raise PhoenixFlags.Error,
           "PhoenixFlags.Flag :key must be a non-empty string, got: #{inspect(key)}"
+  end
+
+  # These are varchar(255) columns, and seeding writes every new flag in one
+  # insert: one over-long or non-string field made it fail as a whole, logged a
+  # warning, and left every new flag reading its default. Caught here instead,
+  # at compile time. Counted in characters, as Postgres counts varchar.
+  @max_text 255
+
+  defp validate_text!(_field, nil), do: :ok
+
+  defp validate_text!(field, value) when is_binary(value) do
+    if String.length(value) > @max_text do
+      raise PhoenixFlags.Error,
+            "PhoenixFlags.Flag :#{field} must be at most #{@max_text} characters, " <>
+              "got #{String.length(value)}: #{inspect(String.slice(value, 0, 40))}..."
+    end
+  end
+
+  defp validate_text!(field, value) do
+    raise PhoenixFlags.Error,
+          "PhoenixFlags.Flag :#{field} must be a string, got: #{inspect(value)}"
+  end
+
+  defp validate_default_is_string!(default) when is_binary(default), do: :ok
+
+  defp validate_default_is_string!(default) do
+    raise PhoenixFlags.Error,
+          "PhoenixFlags.Flag :default must be a string, as every value is stored as one, " <>
+            "got: #{inspect(default)}. Write #{inspect(to_string_hint(default))} instead."
+  end
+
+  defp to_string_hint(value) do
+    to_string(value)
+  rescue
+    _error -> "..."
   end
 
   defp validate_type!(type) when type in @valid_types, do: :ok
@@ -157,6 +197,8 @@ defmodule PhoenixFlags.Flag do
               "got: #{inspect(variants)}"
     end
 
+    Enum.each(variants, fn {_label, name, _weight} -> validate_variant_name!(name) end)
+
     # Reuse the runtime parser so a declaration and a dashboard edit can never
     # disagree about what a valid split is.
     weights = Enum.map(variants, fn {_label, value, weight} -> {value, weight} end)
@@ -175,6 +217,18 @@ defmodule PhoenixFlags.Flag do
   defp validate_variants!(type, _variants) do
     raise PhoenixFlags.Error,
           "PhoenixFlags.Flag :variants is only valid for :variant type, got type: :#{type}"
+  end
+
+  # A split is stored as "name=weight,name=weight" and parsed with surrounding
+  # whitespace trimmed, so a name with either separator or with spaces at its
+  # ends would come back as a different name: " a" is stored, "a" is assigned,
+  # and every dashboard save then fails as an unknown variant.
+  defp validate_variant_name!(name) do
+    if name != String.trim(name) or String.contains?(name, [",", "="]) do
+      raise PhoenixFlags.Error,
+            ~s(PhoenixFlags.Flag variant name #{inspect(name)} must not contain "," or "=" ) <>
+              "or start or end with whitespace"
+    end
   end
 
   # A silently ignored option is a trap — the same reasoning as

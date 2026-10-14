@@ -5,6 +5,89 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.0] - 2026-10-14
+
+### Changed
+
+- **Startup no longer deletes flags the code does not declare.** In a rolling
+  deploy an old node restarting deleted a flag the new release had just added,
+  value and all. Undeclared rows are kept, logged, and marked in the dashboard;
+  the new `prune_undeclared/0` deletes them, with their targeting rules, once no
+  node declares them.
+- **A type change keeps a stored value the new type accepts**, so a deploy that
+  flips the type back and forth no longer resets it each time. A `:secret` on
+  either side still resets.
+- **A database that is down at startup no longer stops the application.** The
+  Server starts, reads return defaults, and the seed and load are retried with
+  backoff up to 30s.
+- **Saving a secret blank in the dashboard keeps it.** It used to erase it, and
+  the field starts blank. A Clear button empties it.
+- A `:secret` flag declared without an `:encryptor` warns at compile time rather
+  than raising, and an encryptor set in app env is accepted. The Server still
+  refuses to start without one.
+- `Config` raises on an option of the wrong shape: `audit: "true"` used to leave
+  auditing off.
+- `""` is a value for `:string`, `:select` (when declared) and `:secret` flags.
+- An `:eq` condition must have exactly one value.
+- A stub set by a test is seen by a `Task` it starts, through `$callers`.
+- `Test.insert_entry/2` uses the declared type and encrypts a `:secret`.
+- `put_target/3` and `delete_target/2` take `actor:` and are audited.
+- `audit_log` takes `limit:`, lists newest first within the same second, and a
+  save that changes nothing records nothing.
+- `delete_target/2` returns `{:error, :unavailable}` when the database cannot be
+  reached, rather than `:not_found`.
+- `:live_socket_path` on `flags_dashboard/2` is deprecated: it never had an
+  effect.
+
+### Added
+
+- `:csp_nonce_assign_key` on `flags_dashboard/2`, putting your CSP nonce on the
+  dashboard's script tag.
+- The dashboard refreshes itself, so changes by another admin or node show up,
+  and says what went wrong when a save fails.
+
+### Fixed
+
+- Targeting: a `nil` context value matched `:not_in`; one list in the context
+  (`roles: [:admin]`) switched off every rule for that caller.
+- Targeting: a rule change could be overwritten by a concurrent cache reload;
+  uncached (test) reads ignored rules written another way and leaked one test's
+  rules into others; a rule whose value the flag no longer accepts is not
+  loaded; `put_target` accepts string-keyed attrs.
+- `get/3` on a targeted `:variant` flag raises as an untargeted one does; a
+  value that fails to cast returns the caller's default rather than `nil`.
+- A secret's plaintext could reach the logs through the decrypt warning, an
+  update's exception, or a crash report.
+- `NaN` is refused for `:decimal` too, as 0.10.2 did for `:percentage`: it
+  raises on a caller's first comparison. A hand-edited percentage outside
+  0..100 no longer loads.
+- `update_entry` returns `{:error, :unavailable}` when the Server is not
+  running, rather than exiting the caller.
+- `mix phoenix_flags.install` crashed before writing anything.
+- `mix igniter.upgrade` across several releases generated migrations with one
+  version, which Ecto refuses.
+- `Flag.new!/1` refuses a field over 255 characters, which made seeding fail for
+  every new flag, a non-string default, and a variant name the stored split
+  cannot hold; `use PhoenixFlags` refuses a key declared twice.
+- Migrations quote the prefix, infer a lost version from the tables present,
+  and survive `up/1` being called twice in one migration.
+- `Context.put/1` accepts a struct.
+- Dashboard: keyboard and screen-reader access (the Edit button was invisible
+  without hover, toggles had no name, focus left the dialog); keys that are not
+  valid DOM ids; unsaved weights lost when a rule was added; forged events that
+  crashed the view or deleted a rule on another flag; inline styles that needed
+  `'unsafe-inline'`; a stylesheet cacheable by shared caches.
+- Generated `select_options/1` and `variants/1` no longer make Elixir's type
+  checker warn in the host app.
+
+### Internal
+
+- `PhoenixFlags.Server` is split into modules that each own one thing:
+  `Declarations`, `Cache`, `Values`, `Store`, `Audit`, `Seed`, `Targeting` and
+  `Reader`. Declarations are looked up by key through generated clauses rather
+  than list scans; one `Type.parse/2` serves validation and casting; cache
+  writes that would change nothing are skipped; a burst of reloads is one load.
+
 ## [0.10.2] - 2026-10-14
 
 ### Fixed

@@ -20,6 +20,8 @@ if Code.ensure_loaded?(Plug) do
     @impl Plug
     def init(action), do: action
 
+    # private: the request runs through the host's :browser pipeline, which may
+    # set a cookie, and a shared cache must not store that response for others.
     @impl Plug
     def call(conn, _action) do
       hash = conn.params["hash"]
@@ -29,7 +31,7 @@ if Code.ensure_loaded?(Plug) do
         |> Plug.Conn.put_resp_header("content-type", "text/css; charset=utf-8")
         |> Plug.Conn.put_resp_header(
           "cache-control",
-          "public, max-age=31536000, immutable"
+          "private, max-age=31536000, immutable"
         )
         |> Plug.Conn.send_resp(200, @css_content)
         |> Plug.Conn.halt()

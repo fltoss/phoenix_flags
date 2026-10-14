@@ -82,15 +82,32 @@ defmodule PhoenixFlags.Config do
     end
 
     %__MODULE__{
-      otp_app: opts[:otp_app],
-      repo: opts[:repo],
-      name: opts[:name],
-      cache_enabled: Map.get(opts, :cache_enabled, true),
-      audit: Map.get(opts, :audit, false),
-      actor_fn: Map.get(opts, :actor_fn),
-      encryptor: Map.get(opts, :encryptor),
+      otp_app: validate!(:otp_app, opts[:otp_app], &is_atom/1, "an atom"),
+      repo: validate!(:repo, opts[:repo], &is_atom/1, "a module"),
+      name: validate!(:name, opts[:name], &is_atom/1, "a module"),
+      cache_enabled:
+        validate!(:cache_enabled, Map.get(opts, :cache_enabled, true), &is_boolean/1, "a boolean"),
+      audit: validate!(:audit, Map.get(opts, :audit, false), &is_boolean/1, "a boolean"),
+      actor_fn:
+        validate!(
+          :actor_fn,
+          Map.get(opts, :actor_fn),
+          &(is_nil(&1) or is_function(&1, 1)),
+          "a 1-arity function or nil"
+        ),
+      encryptor: validate!(:encryptor, Map.get(opts, :encryptor), &is_atom/1, "a module or nil"),
       refresh_interval: validate_refresh_interval!(Map.get(opts, :refresh_interval, 60_000))
     }
+  end
+
+  # A value of the wrong shape was taken at face value: `audit: "true"` left
+  # auditing off, and `cache_enabled: "false"` left caching on.
+  defp validate!(option, value, valid?, expected) do
+    if valid?.(value) do
+      value
+    else
+      raise PhoenixFlags.Error, ":#{option} must be #{expected}, got: #{inspect(value)}"
+    end
   end
 
   defp validate_refresh_interval!(interval)

@@ -13,16 +13,24 @@ if Code.ensure_loaded?(Phoenix.LiveView.Router) do
             pipe_through [:browser, :require_admin]
 
             flags_dashboard "/flags",
-              config: MyApp.SystemConfig
+              config: MyApp.SystemConfig,
+              on_mount: [{MyAppWeb.UserAuth, :require_admin}]
           end
+
+    The dashboard does no authorisation of its own. A pipeline guards the page
+    request but not the LiveView's socket: the signed session it hands the
+    browser can be replayed to reconnect, after the admin who opened the page
+    has lost the role. Always pass an `:on_mount` hook that checks again.
         end
 
     ## Options
 
       * `:config` (required) — the module that `use PhoenixFlags`
       * `:on_mount` — list of `Phoenix.LiveView.on_mount/1` hooks to add
-        to the live session (e.g. for authentication)
-      * `:live_socket_path` — defaults to `"/live"`
+        to the live session. This is where authorisation belongs: see above.
+      * `:csp_nonce_assign_key` — the conn assign holding your Content Security
+        Policy nonce, e.g. `:csp_nonce`. Given, the script tag carries it, so a
+        policy with `'strict-dynamic'` or no `'self'` still loads the bundle.
       * `:app_js` — path to the host application's JS bundle, which must connect
         a LiveSocket. Defaults to `"/assets/js/app.js"`.
       * `:favicon` — href for the dashboard's icon. Defaults to `"data:,"`,
@@ -46,7 +54,7 @@ if Code.ensure_loaded?(Phoenix.LiveView.Router) do
     """
     defmacro flags_dashboard(path, opts) do
       quote bind_quoted: binding() do
-        {session_name, pipeline_name, session_opts, route_opts, app_js, app_js_type, favicon} =
+        {session_name, pipeline_name, session_opts, page_opts} =
           PhoenixFlags.Router.__options__(opts)
 
         scope path, alias: false, as: false do
@@ -61,24 +69,21 @@ if Code.ensure_loaded?(Phoenix.LiveView.Router) do
           # with a shared name would add a dead duplicate clause and silently
           # reuse the first mount's :app_js.
           pipeline pipeline_name do
-            plug(:phoenix_flags_assign_app_js, {app_js, app_js_type, favicon})
+            plug(:phoenix_flags_assign_page, page_opts)
           end
 
           pipe_through(pipeline_name)
 
           live_session session_name, session_opts do
-            live("/", PhoenixFlags.UI.DashboardLive, :index, route_opts)
+            live("/", PhoenixFlags.UI.DashboardLive, :index, [])
           end
         end
 
-        unless Module.defines?(__MODULE__, {:phoenix_flags_assign_app_js, 2}) do
+        unless Module.defines?(__MODULE__, {:phoenix_flags_assign_page, 2}) do
           @doc false
-          def phoenix_flags_assign_app_js(conn, {app_js, app_js_type, favicon}) do
-            conn
-            |> Plug.Conn.assign(:app_js, app_js)
-            |> Plug.Conn.assign(:app_js_type, app_js_type)
-            |> Plug.Conn.assign(:favicon, favicon)
-          end
+
+          def phoenix_flags_assign_page(conn, page_opts),
+            do: PhoenixFlags.Router.__assign_page__(conn, page_opts)
         end
       end
     end
@@ -86,27 +91,41 @@ if Code.ensure_loaded?(Phoenix.LiveView.Router) do
     @doc false
     def __options__(options) do
       config = Keyword.fetch!(options, :config)
-      on_mount = Keyword.get(options, :on_mount, [])
-      live_socket_path = Keyword.get(options, :live_socket_path, "/live")
-      app_js = Keyword.get(options, :app_js, "/assets/js/app.js")
-      app_js_type = Keyword.get(options, :app_js_type)
-      favicon = Keyword.get(options, :favicon, "data:,")
+
+      if Keyword.has_key?(options, :live_socket_path) do
+        IO.warn(
+          "flags_dashboard's :live_socket_path never had an effect and is deprecated: " <>
+            "the socket path is whatever your app.js connects to. Remove the option."
+        )
+      end
 
       session_opts = [
         root_layout: {PhoenixFlags.UI.Layouts, :root},
         layout: {PhoenixFlags.UI.Layouts, :live},
-        on_mount: on_mount,
+        on_mount: Keyword.get(options, :on_mount, []),
         session: {__MODULE__, :__session__, [config]}
       ]
 
-      route_opts = [
-        private: %{live_socket_path: live_socket_path}
-      ]
+      page_opts = %{
+        app_js: Keyword.get(options, :app_js, "/assets/js/app.js"),
+        app_js_type: Keyword.get(options, :app_js_type),
+        favicon: Keyword.get(options, :favicon, "data:,"),
+        csp_nonce_assign_key: Keyword.get(options, :csp_nonce_assign_key)
+      }
 
-      session_name = :"phoenix_flags_#{config}"
-      pipeline_name = :"phoenix_flags_assigns_#{config}"
+      {:"phoenix_flags_#{config}", :"phoenix_flags_assigns_#{config}", session_opts, page_opts}
+    end
 
-      {session_name, pipeline_name, session_opts, route_opts, app_js, app_js_type, favicon}
+    @doc false
+
+    def __assign_page__(conn, page_opts) do
+      nonce = page_opts.csp_nonce_assign_key && conn.assigns[page_opts.csp_nonce_assign_key]
+
+      conn
+      |> Plug.Conn.assign(:app_js, page_opts.app_js)
+      |> Plug.Conn.assign(:app_js_type, page_opts.app_js_type)
+      |> Plug.Conn.assign(:favicon, page_opts.favicon)
+      |> Plug.Conn.assign(:phoenix_flags_csp_nonce, nonce)
     end
 
     @doc false

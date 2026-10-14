@@ -39,7 +39,8 @@ defmodule PhoenixFlags.Target do
 
   A rule on `company_id` does not match a context without a `company_id`. It does
   not match vacuously and it does not raise — an absent attribute simply is not a
-  match, so `:not_in` on a missing attribute is `false` too.
+  match, so `:not_in` on a missing attribute is `false` too. An attribute set to
+  `nil`, or to a value `to_string/1` cannot convert, counts as missing.
   """
 
   use Ecto.Schema
@@ -111,7 +112,7 @@ defmodule PhoenixFlags.Target do
   def resolve(targets, context) when is_list(targets) do
     normalised = normalise_context(context)
 
-    case Enum.find(targets, &matches?(&1, normalised)) do
+    case Enum.find(targets, &all_conditions_match?(&1, normalised)) do
       %__MODULE__{value: value} -> {:ok, value}
       nil -> :none
     end
@@ -131,18 +132,15 @@ defmodule PhoenixFlags.Target do
   @spec matches?(t(), map()) :: boolean()
   def matches?(target, context)
 
-  def matches?(%__MODULE__{conditions: conditions}, context) when is_list(conditions) do
-    context = if normalised?(context), do: context, else: normalise_context(context)
+  def matches?(target, context), do: all_conditions_match?(target, normalise_context(context))
 
+  # resolve/2 normalises the context once for the whole list, then asks this.
+  defp all_conditions_match?(%__MODULE__{conditions: conditions}, context)
+       when is_list(conditions) do
     conditions != [] and Enum.all?(conditions, &condition_matches?(&1, context))
   end
 
-  def matches?(_target, _context), do: false
-
-  # Marked so resolve/2 can normalise once for the whole list instead of once per
-  # rule, while matches?/2 stays safe to call on its own.
-  defp normalised?(%{__phoenix_flags_normalised__: true}), do: true
-  defp normalised?(_context), do: false
+  defp all_conditions_match?(_target, _context), do: false
 
   defp normalise_context(context) when is_map(context) do
     context
@@ -152,10 +150,9 @@ defmodule PhoenixFlags.Target do
         :error -> acc
       end
     end)
-    |> Map.put(:__phoenix_flags_normalised__, true)
   end
 
-  defp normalise_context(_context), do: %{__phoenix_flags_normalised__: true}
+  defp normalise_context(_context), do: %{}
 
   defp condition_matches?(
          %Condition{attribute: attribute, operator: operator, values: values},
@@ -184,7 +181,11 @@ defmodule PhoenixFlags.Target do
   defp compare(_operator, _value, _values), do: false
 
   # Context values are arbitrary terms from the caller, so String.Chars may not
-  # be implemented; that must not raise on a read path.
+  # be implemented, or may raise -- `to_string([:admin])` is an ArgumentError.
+  # Either way the attribute is unusable and so absent: one odd value must not
+  # switch off every rule for the caller. `nil` is absent too, or `"nil"` would
+  # match `:not_in` for a user with no company.
+  defp safe_to_string(nil), do: :error
   defp safe_to_string(term) when is_binary(term), do: {:ok, term}
   defp safe_to_string(term) when is_atom(term), do: {:ok, Atom.to_string(term)}
   defp safe_to_string(term) when is_integer(term), do: {:ok, Integer.to_string(term)}
@@ -192,6 +193,6 @@ defmodule PhoenixFlags.Target do
   defp safe_to_string(term) do
     {:ok, to_string(term)}
   rescue
-    Protocol.UndefinedError -> :error
+    _error -> :error
   end
 end

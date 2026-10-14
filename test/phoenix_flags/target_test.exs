@@ -90,6 +90,20 @@ defmodule PhoenixFlags.TargetTest do
       refute Target.matches?(target([condition("company_id", "not_in", ["123"])]), %{})
     end
 
+    test "a nil attribute is missing, so it does not match :not_in" do
+      rule = target([condition("company_id", "not_in", ["123"])])
+
+      refute Target.matches?(rule, %{company_id: nil})
+      refute Target.matches?(target([condition("company_id", "in", ["nil"])]), %{company_id: nil})
+    end
+
+    test "a value to_string/1 raises on is missing, and leaves the other attributes working" do
+      rule = target([condition("company_id", "in", ["5"])])
+
+      assert Target.resolve([rule], %{company_id: 5, roles: [:admin]}) == {:ok, "true"}
+      refute Target.matches?(target([condition("roles", "in", ["admin"])]), %{roles: [:admin]})
+    end
+
     test "a rule with no conditions never matches" do
       # An empty condition list would otherwise force its value on everyone.
       refute Target.matches?(target([]), %{company_id: 123})
@@ -198,6 +212,16 @@ defmodule PhoenixFlags.TargetTest do
   end
 
   describe "Condition.changeset/2" do
+    test "an :eq condition takes exactly one value" do
+      changeset =
+        Condition.changeset(%Condition{}, %{attribute: "a", operator: :eq, values: [1, 2]})
+
+      assert {"must be exactly one value for eq; use in for several", _} =
+               changeset.errors[:values]
+
+      assert Condition.changeset(%Condition{}, %{attribute: "a", operator: :eq, values: [1]}).valid?
+    end
+
     defp changeset(attrs), do: Condition.changeset(%Condition{}, attrs)
 
     test "normalises atom attributes, operators and values to strings" do

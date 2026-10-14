@@ -31,6 +31,7 @@ if Code.ensure_loaded?(Phoenix.Component) do
                 page works — see `:app_js_type` in `PhoenixFlags.Router`. --%>
           <script
             type={assigns[:app_js_type]}
+            nonce={assigns[:phoenix_flags_csp_nonce]}
             defer
             phx-track-static
             src={assigns[:app_js] || "/assets/js/app.js"}

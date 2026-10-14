@@ -216,6 +216,12 @@
   max-width: 500px;
 }
 
+.pf-row-undeclared {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--pf-error-text);
+}
+
 .pf-row-actions {
   display: flex;
   align-items: center;
@@ -241,8 +247,23 @@
   transition: opacity 0.15s;
 }
 
-.pf-row:hover .pf-row-edit-btn {
+/* Hover reveals it; keyboard focus and touch screens, which have no hover,
+   must see it too. */
+.pf-row:hover .pf-row-edit-btn,
+.pf-row:focus-within .pf-row-edit-btn {
   opacity: 1;
+}
+
+.pf-row-edit-btn:focus-visible {
+  outline: none;
+  box-shadow: var(--pf-focus-ring);
+  border-radius: var(--pf-radius-sm);
+}
+
+@media (hover: none) {
+  .pf-row-edit-btn {
+    opacity: 1;
+  }
 }
 
 .pf-row-edit-btn:hover {
@@ -379,6 +400,16 @@
   border-color: var(--pf-primary);
 }
 
+.pf-btn-danger {
+  color: var(--pf-error);
+  border-color: var(--pf-error);
+  margin-right: auto;
+}
+
+.pf-btn-danger:hover {
+  background: var(--pf-error-bg);
+}
+
 .pf-btn-primary:hover {
   background: var(--pf-primary-hover);
   border-color: var(--pf-primary-hover);
@@ -431,10 +462,7 @@
 }
 
 .pf-variant-bar-fill {
-  display: block;
-  height: 100%;
-  background: var(--pf-primary);
-  border-radius: var(--pf-radius-sm);
+  fill: var(--pf-primary);
 }
 
 .pf-variant-bar-pct {

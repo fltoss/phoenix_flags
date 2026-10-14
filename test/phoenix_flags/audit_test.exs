@@ -64,6 +64,48 @@ defmodule PhoenixFlags.AuditTest do
   end
 
   describe "audit enabled" do
+    test "a save that leaves the value as it was records nothing" do
+      {module, config} = start_server!(audit: true)
+
+      Server.update_entry(config.name, "flag_a", %{"value" => "true"})
+
+      assert Server.audit_log(module) == []
+    end
+
+    test "lists newest first within one second, and honours :limit" do
+      {module, config} = start_server!(audit: true)
+
+      for value <- ~w(false true false true) do
+        Server.update_entry(config.name, "flag_a", %{"value" => value})
+      end
+
+      assert Enum.map(Server.audit_log(module), & &1.new_value) == ~w(true false true false)
+      assert Enum.map(Server.audit_log(module, limit: 2), & &1.new_value) == ~w(true false)
+      assert length(Server.audit_log(module, "flag_a", limit: 3)) == 3
+    end
+
+    test "records adding and deleting a targeting rule, with the actor" do
+      {module, config} = start_server!(audit: true)
+
+      {:ok, target} =
+        Server.put_target(
+          module,
+          "flag_a",
+          [value: "false", conditions: [[attribute: :c, operator: :in, values: [1, 2]]]],
+          actor: "alice"
+        )
+
+      {:ok, _deleted} = Server.delete_target(config.name, target.id, actor: "bob")
+
+      assert [deleted, added] = Server.audit_log(module, "flag_a")
+
+      assert {added.old_value, added.new_value, added.actor} ==
+               {nil, "rule: c in 1, 2 -> false", "alice"}
+
+      assert {deleted.old_value, deleted.new_value, deleted.actor} ==
+               {"rule: c in 1, 2 -> false", nil, "bob"}
+    end
+
     test "inserts an audit record on successful update" do
       {_module, config} = start_server!(audit: true)
 

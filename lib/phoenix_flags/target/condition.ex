@@ -39,6 +39,7 @@ defmodule PhoenixFlags.Target.Condition do
         "must be one of: #{Enum.map_join(PhoenixFlags.Target.operators(), ", ", &to_string/1)}"
     )
     |> validate_values_present()
+    |> validate_single_value_for_eq()
     |> validate_change(:attribute, fn :attribute, attribute ->
       if String.trim(attribute) == "", do: [attribute: "must not be blank"], else: []
     end)
@@ -52,6 +53,21 @@ defmodule PhoenixFlags.Target.Condition do
     case get_field(changeset, :values) do
       [_first | _rest] -> changeset
       _empty_or_nil -> add_error(changeset, :values, "must have at least one value")
+    end
+  end
+
+  # :eq compares against the first value only, so a second one was silently
+  # ignored -- a rule that looked like it matched two values matched one.
+  defp validate_single_value_for_eq(changeset) do
+    case {get_field(changeset, :operator), get_field(changeset, :values)} do
+      {"eq", [_one]} ->
+        changeset
+
+      {"eq", [_ | _]} ->
+        add_error(changeset, :values, "must be exactly one value for eq; use in for several")
+
+      _other ->
+        changeset
     end
   end
 

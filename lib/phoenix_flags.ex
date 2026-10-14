@@ -65,25 +65,35 @@ defmodule PhoenixFlags do
 
   @doc false
   defmacro __before_compile__(env) do
-    validate_encryptor_present!(env)
+    warn_without_encryptor(env)
+    validate_unique_keys!(env)
+
+    flags = env.module |> Module.get_attribute(:phoenix_flags) |> List.wrap() |> Enum.reverse()
+
+    # One clause per declared key and a catch-all, built here rather than a
+    # lookup into a literal map: the type checker reads a literal map exactly,
+    # and warned -- in the host app -- about lookups it could prove empty.
+    flag_clauses = clauses(:__flag__, Enum.map(flags, &{&1.key, &1}))
+    option_clauses = clauses(:select_options, Enum.flat_map(flags, &declared_options/1))
+    variant_clauses = clauses(:variants, Enum.flat_map(flags, &declared_variants/1))
 
     quote do
       @doc """
       Returns the list of declared flags. Generated from `flag/2` macro calls.
       """
-      def flags do
-        @phoenix_flags |> Enum.reverse()
-      end
+      def flags, do: unquote(Macro.escape(flags))
+
+      @doc false
+      def __flag__(key)
+      unquote_splicing(flag_clauses)
+      def __flag__(_key), do: nil
 
       @doc """
       Returns `{label, value}` options for a `:select` flag, or `[]` if not a select.
       """
-      def select_options(key) do
-        case Enum.find(flags(), &(&1.key == key)) do
-          %PhoenixFlags.Flag{options: options} when is_list(options) -> options
-          _ -> []
-        end
-      end
+      def select_options(key)
+      unquote_splicing(option_clauses)
+      def select_options(_key), do: []
 
       @doc """
       Returns the declared `{label, value, weight}` variants for a `:variant`
@@ -92,29 +102,67 @@ defmodule PhoenixFlags do
       These are the *declared* weights. The live split is whatever is stored in
       the database, which the dashboard can change at runtime.
       """
-      def variants(key) do
-        case Enum.find(flags(), &(&1.key == key)) do
-          %PhoenixFlags.Flag{type: :variant, variants: variants} when is_list(variants) ->
-            variants
+      def variants(key)
+      unquote_splicing(variant_clauses)
+      def variants(_key), do: []
+    end
+  end
 
-          _ ->
-            []
-        end
+  defp declared_options(%{key: key, options: [_ | _] = options}), do: [{key, options}]
+  defp declared_options(_flag), do: []
+
+  defp declared_variants(%{key: key, type: :variant, variants: [_ | _] = variants}),
+    do: [{key, variants}]
+
+  defp declared_variants(_flag), do: []
+
+  defp clauses(name, pairs) do
+    for {key, value} <- pairs do
+      quote do
+        def unquote(name)(unquote(key)), do: unquote(Macro.escape(value))
       end
     end
   end
 
-  # `:secret` flags are meaningless without an encryptor, and the failure would
-  # otherwise only surface at runtime on the first read.
-  defp validate_encryptor_present!(env) do
-    declared_flags = Module.get_attribute(env.module, :phoenix_flags) || []
-    encryptor_set? = Module.get_attribute(env.module, :phoenix_flags_encryptor_set?) || false
-    secret_flags = for flag <- declared_flags, flag.type == :secret, do: flag.key
+  # Each consumer of flags/0 resolved a duplicate differently -- the seed insert
+  # kept the first, the metadata update the last, option validation the first --
+  # so the stored type and the validation could disagree from one boot to the next.
+  defp validate_unique_keys!(env) do
+    keys = env.module |> Module.get_attribute(:phoenix_flags) |> List.wrap() |> Enum.map(& &1.key)
 
-    if secret_flags != [] and not encryptor_set? do
-      raise PhoenixFlags.Error,
-            "#{inspect(env.module)} declares :secret flags #{inspect(secret_flags)} but no :encryptor was passed to `use PhoenixFlags`. " <>
-              "Add `encryptor: MyApp.MyEncryptor` (a module exporting encrypt/1 and decrypt/1) or remove the :secret flags."
+    case Enum.uniq(keys -- Enum.uniq(keys)) do
+      [] ->
+        :ok
+
+      duplicates ->
+        raise PhoenixFlags.Error,
+              "#{inspect(env.module)} declares #{inspect(duplicates)} more than once. " <>
+                "Each flag key must be declared once."
+    end
+  end
+
+  # `:secret` flags are meaningless without an encryptor. The Server refuses to
+  # start without one; this says so at compile time too. A warning, not an
+  # error: the encryptor may be configured in runtime.exs, which a compile
+  # cannot see -- and Config documents app env as a source of it.
+  defp warn_without_encryptor(env) do
+    declared_flags = Module.get_attribute(env.module, :phoenix_flags) || []
+    secret_flags = for flag <- declared_flags, flag.type == :secret, do: flag.key
+    in_options? = Module.get_attribute(env.module, :phoenix_flags_encryptor_set?) || false
+
+    in_app_env? =
+      env.module
+      |> Module.get_attribute(:otp_app)
+      |> Application.get_env(env.module, [])
+      |> Keyword.has_key?(:encryptor)
+
+    if secret_flags != [] and not in_options? and not in_app_env? do
+      IO.warn(
+        "#{inspect(env.module)} declares :secret flags #{inspect(secret_flags)} but no :encryptor " <>
+          "was passed to `use PhoenixFlags` or configured for it. It will refuse to start unless " <>
+          "one is configured by then (a module exporting encrypt/1 and decrypt/1).",
+        Macro.Env.stacktrace(env)
+      )
     end
   end
 
@@ -165,17 +213,18 @@ defmodule PhoenixFlags do
             value: "true"
           )
 
-      See `PhoenixFlags.Target`.
+      Pass `actor:` in `opts` to record who added it in the audit log. See
+      `PhoenixFlags.Target`.
       """
-      def put_target(key, attrs) do
-        PhoenixFlags.Server.put_target(__MODULE__, key, attrs)
+      def put_target(key, attrs, opts \\ []) do
+        PhoenixFlags.Server.put_target(__MODULE__, key, attrs, opts)
       end
 
       @doc """
-      Deletes a targeting rule by id.
+      Deletes a targeting rule by id. Pass `actor:` in `opts` for the audit log.
       """
-      def delete_target(target_id) do
-        PhoenixFlags.Server.delete_target(__MODULE__, target_id)
+      def delete_target(target_id, opts \\ []) do
+        PhoenixFlags.Server.delete_target(__MODULE__, target_id, opts)
       end
     end
   end
@@ -265,21 +314,32 @@ defmodule PhoenixFlags do
       end
 
       @doc """
-      Returns all audit log entries, newest first.
-
-      Raises `PhoenixFlags.Error` unless `audit: true` is set.
+      Deletes stored flags this module no longer declares, with their targeting
+      rules, and returns the deleted keys. Startup never deletes a row, because
+      during a rolling deploy the releases disagree about which flags exist — run
+      this once no node declares them.
       """
-      def audit_log do
-        PhoenixFlags.Server.audit_log(__MODULE__)
+      def prune_undeclared do
+        PhoenixFlags.Server.prune_undeclared(__MODULE__)
       end
 
       @doc """
-      Returns audit log entries for a specific flag key, newest first.
+      Returns audit log entries, newest first: every flag's, or one key's.
+
+          audit_log()
+          audit_log("enable_benefits")
+          audit_log(limit: 50)
+          audit_log("enable_benefits", limit: 50)
 
       Raises `PhoenixFlags.Error` unless `audit: true` is set.
       """
-      def audit_log(key) do
-        PhoenixFlags.Server.audit_log(__MODULE__, key)
+      def audit_log(key_or_opts \\ []) do
+        PhoenixFlags.Server.audit_log(__MODULE__, key_or_opts)
+      end
+
+      @doc false
+      def audit_log(key, opts) do
+        PhoenixFlags.Server.audit_log(__MODULE__, key, opts)
       end
 
       Module.register_attribute(__MODULE__, :phoenix_flags, accumulate: true)
@@ -316,7 +376,12 @@ defmodule PhoenixFlags do
               #{inspect(unquote(test_module))}.insert_entry("enable_benefits", true)
           """
           def insert_entry(key, value, opts \\ []) do
-            PhoenixFlags.Testing.insert_entry(@repo, key, value, opts)
+            PhoenixFlags.Testing.insert_entry(
+              @repo,
+              key,
+              value,
+              Keyword.put_new(opts, :instance, @parent)
+            )
           end
         end
       end

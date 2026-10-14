@@ -41,110 +41,89 @@ if Code.ensure_loaded?(Igniter) do
       }
     end
 
+    # One row per release that changed the schema: the release, the migration
+    # version it needs, and what to tell the person upgrading.
+    @steps [
+      {"0.5.0", 2,
+       """
+       phoenix_flags 0.5.0 adds the `system_flags_audit` table (for the audit log)
+       and enables the `:secret` flag type.
+       """},
+      {"0.6.0", 3,
+       """
+       phoenix_flags 0.6.0 widens the flag and audit value columns from
+       varchar(255) to text (encrypted secrets exceed 255 characters) and
+       moves the schema version into the new system_flags_meta table.
+       """},
+      {"0.9.0", 4,
+       """
+       phoenix_flags 0.9.0 adds targeting rules: force a flag's value for a
+       specific user, company, or any attribute you pass in the request
+       context. Two new tables back it — system_flag_targets and
+       system_flag_target_conditions. Existing flags are unaffected until you
+       add a rule.
+       """}
+    ]
+
     @impl true
     def igniter(igniter) do
       %{from: from, to: to} = igniter.args.positional
-      options = igniter.args.options
 
-      upgrades = %{
-        "0.5.0" => [&upgrade_to_v2_migration/2],
-        "0.6.0" => [&upgrade_to_v3_migration/2],
-        "0.9.0" => [&upgrade_to_v4_migration/2]
-      }
+      upgrades =
+        Map.new(@steps, fn {release, version, notice} ->
+          {release, [&migration_step(&1, &2, version, notice)]}
+        end)
 
-      Igniter.Upgrades.run(igniter, from, to, upgrades, options)
+      Igniter.Upgrades.run(igniter, from, to, upgrades, igniter.args.options)
     end
 
-    defp upgrade_to_v2_migration(igniter, _opts) do
+    defp migration_step(igniter, _opts, version, notice) do
       {igniter, repos} = Igniter.Libs.Ecto.list_repos(igniter)
+      name = "upgrade_system_flags_v#{version}"
 
       case List.first(repos) do
         nil ->
           Igniter.add_warning(
             igniter,
-            "phoenix_flags: no Ecto repo found; skipping the v2 migration generator. " <>
-              "Generate it manually with `mix ecto.gen.migration upgrade_system_flags_v2` " <>
-              "and have it call `PhoenixFlags.Migration.up(version: 2)`."
+            "phoenix_flags: no Ecto repo found; skipping the v#{version} migration generator. " <>
+              "Generate it manually with `mix ecto.gen.migration #{name}` " <>
+              "and have it call `PhoenixFlags.Migration.up(version: #{version})`."
           )
 
         repo ->
           igniter
-          |> Igniter.Libs.Ecto.gen_migration(repo, "upgrade_system_flags_v2",
+          |> Igniter.Libs.Ecto.gen_migration(repo, name,
             body: """
-              def up, do: PhoenixFlags.Migration.up(version: 2)
-              def down, do: PhoenixFlags.Migration.down(version: 2)
+              def up, do: PhoenixFlags.Migration.up(version: #{version})
+              def down, do: PhoenixFlags.Migration.down(version: #{version})
             """,
-            on_exists: :skip
+            on_exists: :skip,
+            timestamp: timestamp(version)
           )
-          |> Igniter.add_notice("""
-          phoenix_flags 0.5.0 adds the `system_flags_audit` table (for the audit log)
-          and enables the `:secret` flag type. A migration was generated — run
-          `mix ecto.migrate` to apply it.
-          """)
+          |> Igniter.add_notice(
+            notice <> "A migration was generated — run `mix ecto.migrate` to apply it."
+          )
       end
     end
 
-    defp upgrade_to_v4_migration(igniter, _opts) do
-      {igniter, repos} = Igniter.Libs.Ecto.list_repos(igniter)
+    # Igniter stamps a migration to the second, so the steps of one upgrade
+    # across several releases would share a version, which Ecto refuses to run.
+    # Offsetting by the schema version keeps them distinct and in order.
+    defp timestamp(version) do
+      {{year, month, day}, {hour, minute, second}} =
+        NaiveDateTime.utc_now()
+        |> NaiveDateTime.add(version)
+        |> NaiveDateTime.to_erl()
 
-      case List.first(repos) do
-        nil ->
-          Igniter.add_warning(
-            igniter,
-            "phoenix_flags: no Ecto repo found; skipping the v4 migration generator. " <>
-              "Generate it manually with `mix ecto.gen.migration upgrade_system_flags_v4` " <>
-              "and have it call `PhoenixFlags.Migration.up(version: 4)`."
-          )
-
-        repo ->
-          igniter
-          |> Igniter.Libs.Ecto.gen_migration(repo, "upgrade_system_flags_v4",
-            body: """
-              def up, do: PhoenixFlags.Migration.up(version: 4)
-              def down, do: PhoenixFlags.Migration.down(version: 4)
-            """,
-            on_exists: :skip
-          )
-          |> Igniter.add_notice("""
-          phoenix_flags 0.9.0 adds targeting rules: force a flag's value for a
-          specific user, company, or any attribute you pass in the request
-          context. Two new tables back it — system_flag_targets and
-          system_flag_target_conditions.
-
-          A migration was generated — run `mix ecto.migrate` to apply it.
-          Existing flags are unaffected until you add a rule.
-          """)
-      end
-    end
-
-    defp upgrade_to_v3_migration(igniter, _opts) do
-      {igniter, repos} = Igniter.Libs.Ecto.list_repos(igniter)
-
-      case List.first(repos) do
-        nil ->
-          Igniter.add_warning(
-            igniter,
-            "phoenix_flags: no Ecto repo found; skipping the v3 migration generator. " <>
-              "Generate it manually with `mix ecto.gen.migration upgrade_system_flags_v3` " <>
-              "and have it call `PhoenixFlags.Migration.up(version: 3)`."
-          )
-
-        repo ->
-          igniter
-          |> Igniter.Libs.Ecto.gen_migration(repo, "upgrade_system_flags_v3",
-            body: """
-              def up, do: PhoenixFlags.Migration.up(version: 3)
-              def down, do: PhoenixFlags.Migration.down(version: 3)
-            """,
-            on_exists: :skip
-          )
-          |> Igniter.add_notice("""
-          phoenix_flags 0.6.0 widens the flag and audit value columns from
-          varchar(255) to text (encrypted secrets exceed 255 characters) and
-          moves the schema version into the new system_flags_meta table.
-          A migration was generated — run `mix ecto.migrate` to apply it.
-          """)
-      end
+      :io_lib.format("~4..0B~2..0B~2..0B~2..0B~2..0B~2..0B", [
+        year,
+        month,
+        day,
+        hour,
+        minute,
+        second
+      ])
+      |> IO.iodata_to_binary()
     end
   end
 end

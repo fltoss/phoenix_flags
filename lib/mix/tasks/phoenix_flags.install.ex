@@ -57,14 +57,14 @@ if Code.ensure_loaded?(Igniter) do
         body: """
           def up, do: PhoenixFlags.Migration.up()
           def down, do: PhoenixFlags.Migration.down(version: 1)
-        """
+        """,
+        on_exists: :skip
       )
       |> Igniter.Project.Config.configure_new(
+        "test.exs",
         otp_app,
-        module_name,
-        [:cache_enabled],
-        false,
-        file: "test.exs"
+        [module_name, :cache_enabled],
+        false
       )
       |> Igniter.Project.Application.add_new_child(module_name)
     end

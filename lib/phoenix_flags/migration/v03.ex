@@ -25,7 +25,9 @@ defmodule PhoenixFlags.Migration.V03 do
       add(:value, :string)
     end
 
-    execute("COMMENT ON TABLE #{prefix}.system_flags IS NULL")
+    execute(
+      "COMMENT ON TABLE #{PhoenixFlags.Migration.qualified(prefix, "system_flags")} IS NULL"
+    )
   end
 
   # Rolling back can fail if any stored value exceeds 255 characters —
