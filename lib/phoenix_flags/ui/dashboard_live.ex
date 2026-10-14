@@ -136,12 +136,17 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
     end
 
     def handle_event("pf-save", %{"key" => key, "entry" => params}, socket) when is_map(params) do
-      blank? = Map.get(params, "value") in [nil, ""]
+      # A secret is posted as "password", which Phoenix's default
+      # :filter_parameters keeps out of LiveView's debug log of the event.
+      secret = Map.get(params, "password")
 
       case find_entry(socket, key) do
         # A blank secret keeps the stored one; Clear is how it is emptied.
-        %Entry{type: "secret"} when blank? ->
+        %Entry{type: "secret"} when secret in [nil, ""] ->
           {:noreply, socket |> close() |> assign(:notice, {:info, "Kept the stored secret."})}
+
+        %Entry{type: "secret"} when is_binary(secret) ->
+          {:noreply, save(socket, key, %{"value" => secret})}
 
         %Entry{} ->
           {:noreply, save(socket, key, variant_attrs(socket, key, params))}

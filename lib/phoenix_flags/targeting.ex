@@ -106,7 +106,17 @@ defmodule PhoenixFlags.Targeting do
       _none -> nil
     end
   rescue
-    DBConnection.OwnershipError -> nil
+    # A read must not take the caller down; without rules it falls through to
+    # the row, which has its own fallback.
+    DBConnection.OwnershipError ->
+      nil
+
+    error ->
+      Logger.warning(
+        "PhoenixFlags: failed to read targeting rules for #{inspect(key)}: #{inspect(error)}"
+      )
+
+      nil
   end
 
   @doc """

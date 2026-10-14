@@ -132,7 +132,7 @@ defmodule PhoenixFlags.Migration do
     )
   end
 
-  false
+  @doc false
   def qualified(prefix, table), do: ~s("#{prefix}".#{table})
 
   @doc false

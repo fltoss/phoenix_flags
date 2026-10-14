@@ -247,21 +247,27 @@ defmodule PhoenixFlags.Server do
   # A database that is down at boot must not stop the application: reads fall
   # back to defaults, or to whatever an earlier run left in the cache, while
   # the seed and the load are retried with backoff until they succeed.
+  #
+  # The cache is loaded whatever the seed did: a seed can fail for a lasting
+  # reason -- a missing grant, a value too long for an old schema -- and the
+  # stored values must still be served while it is retried.
   defp start(config, attempt) do
-    with seeded when seeded != :failed <- Seed.sync(config),
-         :ok <- try_load_cache(config, "failed to load the cache") do
-      if seeded == :changed, do: notify_peers(config)
-      schedule_refresh(config)
+    seeded = Seed.sync(config)
+    loaded = try_load_cache(config, "failed to load the cache")
+
+    # A failed seed may still have committed a part.
+    if seeded != :unchanged, do: notify_peers(config)
+
+    if seeded == :failed or loaded == :error do
+      delay = min(1_000 * 2 ** (attempt - 1), 30_000)
+
+      Logger.error(
+        "PhoenixFlags: #{inspect(config.name)} could not start fully; retrying in #{delay}ms"
+      )
+
+      Process.send_after(self(), {:start, attempt + 1}, delay)
     else
-      _failed ->
-        notify_peers(config)
-        delay = min(1_000 * 2 ** (attempt - 1), 30_000)
-
-        Logger.error(
-          "PhoenixFlags: #{inspect(config.name)} could not start; retrying in #{delay}ms"
-        )
-
-        Process.send_after(self(), {:start, attempt + 1}, delay)
+      schedule_refresh(config)
     end
   end
 
@@ -273,7 +279,12 @@ defmodule PhoenixFlags.Server do
   # Rules are reloaded here rather than in the caller, so a rule change and a
   # periodic reload cannot overwrite each other with an older read.
   def handle_call(:reload_rules, _from, %Config{} = config) do
-    store_targets(config, Cache.entries(config.name))
+    # From the table, not the last load: a flag seeded since then must not lose
+    # the rule just added to it.
+    with {:error, _reason} <- try_store_targets(config) do
+      Logger.warning("PhoenixFlags: could not reload rules; the periodic refresh will")
+    end
+
     notify_peers(config)
     {:reply, :ok, config}
   end
@@ -301,7 +312,7 @@ defmodule PhoenixFlags.Server do
 
   # A crash report prints the message being handled and the mailbox, and an
   # {:update, ...} carries a secret's plaintext. GenServer only declares the
-  # callback from Elixir 1.17; OTP calls it either way.
+  # callback from Elixir 1.17; OTP calls it either way, from OTP 25.
   if Version.match?(System.version(), ">= 1.17.0") do
     @impl true
     def format_status(status), do: redact_status(status)
@@ -381,6 +392,13 @@ defmodule PhoenixFlags.Server do
     after
       0 -> :ok
     end
+  end
+
+  defp try_store_targets(config) do
+    store_targets(config, Store.all(config))
+    :ok
+  rescue
+    error -> {:error, error}
   end
 
   defp store_targets(config, entries) do

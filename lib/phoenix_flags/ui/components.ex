@@ -334,7 +334,7 @@ if Code.ensure_loaded?(Phoenix.Component) do
       <div>
         <input
           type="password"
-          name="entry[value]"
+          name="entry[password]"
           value=""
           autocomplete="new-password"
           placeholder="Enter a new value (blank keeps the stored one)"

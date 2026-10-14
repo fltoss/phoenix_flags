@@ -520,6 +520,52 @@ defmodule PhoenixFlags.SeedTest do
   end
 
   describe "server init without DB" do
+    test "a seed that keeps failing still loads the stored values" do
+      import ExUnit.CaptureLog
+
+      TestRepo.insert!(%Entry{
+        key: "stored",
+        value: "kept",
+        type: "string",
+        category: "t",
+        label: "Stored"
+      })
+
+      flags = [
+        %{key: "stored", type: "string", value: "default", category: "t", label: "Stored"},
+        %{key: "new_one", type: "string", value: "x", category: "t", label: "New"}
+      ]
+
+      module_name = :"PhoenixFlags.SeedTest.Refused#{System.unique_integer([:positive])}"
+
+      Module.create(
+        module_name,
+        quote(do: def(flags, do: unquote(Macro.escape(flags)))),
+        Macro.Env.location(__ENV__)
+      )
+
+      on_exit(fn ->
+        for key <- [:cache, :config, :order, :targets],
+            do: :persistent_term.erase({PhoenixFlags, module_name, key})
+      end)
+
+      config = %Config{
+        otp_app: :phoenix_flags,
+        repo: PhoenixFlags.InsertRefusingRepo,
+        name: module_name,
+        cache_enabled: true
+      }
+
+      log =
+        capture_log(fn ->
+          pid = start_supervised!({Server, config})
+          _ = :sys.get_state(pid)
+        end)
+
+      assert log =~ "failed to sync flags"
+      assert Server.get(module_name, "stored") == "kept"
+    end
+
     test "starts anyway, logs, and retries rather than stopping the application" do
       import ExUnit.CaptureLog
 
@@ -551,8 +597,9 @@ defmodule PhoenixFlags.SeedTest do
         end)
 
       assert log =~ "failed to sync flags"
-      assert log =~ "could not start; retrying in 1000ms"
+      assert log =~ "could not start fully; retrying in 1000ms"
       assert Server.get(module_name, "no_db", :default) == :default
+      assert Server.get(module_name, "no_db", :default, context: %{company_id: 1}) == :default
     end
   end
 end

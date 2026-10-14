@@ -1196,10 +1196,20 @@ defmodule PhoenixFlags.UI.DashboardLiveTest do
       {:ok, view, _html} = live(conn, "/flags")
 
       view |> element(~s(button[phx-value-key="api_key"])) |> render_click()
-      html = view |> element("#pf-form-api_key") |> render_submit(%{"entry" => %{"value" => ""}})
+
+      html =
+        view |> element("#pf-form-api_key") |> render_submit(%{"entry" => %{"password" => ""}})
 
       assert html =~ "Kept the stored secret"
       assert TestRepo.get_by!(Entry, key: "api_key").value == "stored-cipher"
+
+      view |> element(~s(button[phx-value-key="api_key"])) |> render_click()
+
+      view
+      |> element("#pf-form-api_key")
+      |> render_submit(%{"entry" => %{"password" => "sk-new"}})
+
+      assert TestRepo.get_by!(Entry, key: "api_key").value == "sk-new"
 
       view |> element(~s(button[phx-value-key="api_key"])) |> render_click()
       view |> element(~s(button[phx-click="pf-clear-secret"])) |> render_click()

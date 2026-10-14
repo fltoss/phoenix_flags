@@ -116,7 +116,7 @@ if Code.ensure_loaded?(Phoenix.LiveView.Router) do
       {:"phoenix_flags_#{config}", :"phoenix_flags_assigns_#{config}", session_opts, page_opts}
     end
 
-    false
+    @doc false
 
     def __assign_page__(conn, page_opts) do
       nonce = page_opts.csp_nonce_assign_key && conn.assigns[page_opts.csp_nonce_assign_key]
