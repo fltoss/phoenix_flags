@@ -100,6 +100,45 @@ defmodule PhoenixFlags.CachedTest do
     end
 
     @tag :capture_log
+    test "returns {:error, :unavailable}, not an exit, when the Server is not running" do
+      name = :"PhoenixFlags.CachedTest.Gone#{System.unique_integer([:positive])}"
+
+      PhoenixFlags.Cache.put_config(%PhoenixFlags.Config{
+        otp_app: :phoenix_flags,
+        repo: TestRepo,
+        name: name,
+        cache_enabled: true
+      })
+
+      assert PhoenixFlags.Server.update_entry(name, "cached_bool", %{"value" => "false"}) ==
+               {:error, :unavailable}
+    end
+
+    test "a burst of :reload messages is one load", %{server: server} do
+      test_pid = self()
+      handler = "count-loads-#{inspect(test_pid)}"
+
+      :telemetry.attach(
+        handler,
+        [:phoenix_flags, :test_repo, :query],
+        fn _event, _measurements, metadata, _config ->
+          if metadata.source == "system_flags", do: send(test_pid, :entries_loaded)
+        end,
+        nil
+      )
+
+      on_exit(fn -> :telemetry.detach(handler) end)
+
+      :ok = :sys.suspend(server)
+      for _ <- 1..5, do: send(server, :reload)
+      :ok = :sys.resume(server)
+      _ = :sys.get_state(server)
+
+      assert_received :entries_loaded
+      refute_received :entries_loaded
+    end
+
+    @tag :capture_log
     test "returns {:error, :timeout} from a busy Server instead of exiting", %{server: server} do
       :ok = :sys.suspend(server)
 

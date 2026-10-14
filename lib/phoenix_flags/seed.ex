@@ -17,7 +17,11 @@ defmodule PhoenixFlags.Seed do
 
   require Logger
 
-  @doc "Syncs declarations into the table. Returns whether anything changed."
+  @doc """
+  Syncs declarations into the table: `:changed`, `:unchanged`, or `:failed`
+  when the database could not be reached -- which may still have committed a
+  part, so peers should reload either way.
+  """
   def sync(%Config{name: name} = config) do
     declared =
       name
@@ -30,12 +34,11 @@ defmodule PhoenixFlags.Seed do
     updated? = update_metadata(config, declared, existing)
     log_undeclared(existing, declared)
 
-    inserted? or updated?
+    if inserted? or updated?, do: :changed, else: :unchanged
   rescue
     error ->
       Logger.warning("PhoenixFlags: failed to sync flags: #{inspect(error)}")
-      # Partial changes may have been committed, so report a change.
-      true
+      :failed
   end
 
   @doc "Deletes stored flags no longer declared, with their rules. Returns the keys."

@@ -59,7 +59,14 @@ defmodule PhoenixFlags.Cache do
   def erase_repo_claim(repo), do: :persistent_term.erase(repo_claim_key(repo))
 
   defp get(key, default), do: :persistent_term.get(key, default)
-  defp put(key, term), do: :persistent_term.put(key, term)
+  # Replacing a term makes every process on the node scan its heap for the old
+  # one, and a periodic refresh almost always loads what is already there.
+  defp put(key, term) do
+    case :persistent_term.get(key, :__phoenix_flags_absent__) do
+      ^term -> :ok
+      _changed -> :persistent_term.put(key, term)
+    end
+  end
 
   defp entries_key(instance), do: {PhoenixFlags, instance, :cache}
   defp config_key(instance), do: {PhoenixFlags, instance, :config}

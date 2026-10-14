@@ -217,7 +217,17 @@ defmodule PhoenixFlags.Server do
     :exit, {:timeout, _} ->
       Logger.warning("PhoenixFlags: update of #{inspect(key)} timed out after #{timeout}ms")
       {:error, :timeout}
+
+    # Not running, or restarting: nothing was written. The reason holds the
+    # call's arguments, a secret's plaintext among them, so only its name is logged.
+    :exit, reason ->
+      Logger.warning("PhoenixFlags: update of #{inspect(key)} failed: #{exit_name(reason)}")
+      {:error, :unavailable}
   end
+
+  defp exit_name({name, _call}) when is_atom(name), do: inspect(name)
+  defp exit_name(name) when is_atom(name), do: inspect(name)
+  defp exit_name(_reason), do: "exit"
 
   # ============================================================================
   # GenServer
@@ -230,10 +240,29 @@ defmodule PhoenixFlags.Server do
     claim_repo!(config)
     Cache.put_config(config)
     Cache.put_order(config.name, Declarations.order(config.name))
-    if Seed.sync(config), do: notify_peers(config)
-    load_cache(config)
-    schedule_refresh(config)
+    start(config, 1)
     {:ok, config}
+  end
+
+  # A database that is down at boot must not stop the application: reads fall
+  # back to defaults, or to whatever an earlier run left in the cache, while
+  # the seed and the load are retried with backoff until they succeed.
+  defp start(config, attempt) do
+    with seeded when seeded != :failed <- Seed.sync(config),
+         :ok <- try_load_cache(config, "failed to load the cache") do
+      if seeded == :changed, do: notify_peers(config)
+      schedule_refresh(config)
+    else
+      _failed ->
+        notify_peers(config)
+        delay = min(1_000 * 2 ** (attempt - 1), 30_000)
+
+        Logger.error(
+          "PhoenixFlags: #{inspect(config.name)} could not start; retrying in #{delay}ms"
+        )
+
+        Process.send_after(self(), {:start, attempt + 1}, delay)
+    end
   end
 
   @impl true
@@ -250,7 +279,14 @@ defmodule PhoenixFlags.Server do
   end
 
   @impl true
+  def handle_info({:start, attempt}, %Config{} = config) do
+    start(config, attempt)
+    {:noreply, config}
+  end
+
+  # A burst of writes elsewhere sends a burst of :reload; one load covers them.
   def handle_info(:reload, %Config{} = config) do
+    drain(:reload)
     try_load_cache(config, "failed to reload cache")
     {:noreply, config}
   end
@@ -332,8 +368,19 @@ defmodule PhoenixFlags.Server do
 
   defp try_load_cache(config, failure) do
     load_cache(config)
+    :ok
   rescue
-    error -> Logger.error("PhoenixFlags: #{failure}: #{inspect(error)}")
+    error ->
+      Logger.error("PhoenixFlags: #{failure}: #{inspect(error)}")
+      :error
+  end
+
+  defp drain(message) do
+    receive do
+      ^message -> drain(message)
+    after
+      0 -> :ok
+    end
   end
 
   defp store_targets(config, entries) do

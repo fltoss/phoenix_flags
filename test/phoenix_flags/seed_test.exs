@@ -520,7 +520,7 @@ defmodule PhoenixFlags.SeedTest do
   end
 
   describe "server init without DB" do
-    test "crashes cleanly and logs warning when database is unavailable" do
+    test "starts anyway, logs, and retries rather than stopping the application" do
       import ExUnit.CaptureLog
 
       flags = [
@@ -544,15 +544,15 @@ defmodule PhoenixFlags.SeedTest do
         cache_enabled: false
       }
 
-      # Server should crash during init — not hang or silently degrade
-      Process.flag(:trap_exit, true)
-
       log =
         capture_log(fn ->
-          assert {:error, _reason} = Server.start_link(config)
+          pid = start_supervised!({Server, config})
+          _ = :sys.get_state(pid)
         end)
 
       assert log =~ "failed to sync flags"
+      assert log =~ "could not start; retrying in 1000ms"
+      assert Server.get(module_name, "no_db", :default) == :default
     end
   end
 end
