@@ -33,6 +33,6 @@ defmodule Mix.Tasks.PhoenixFlags.InstallTest do
     assert migration, "no create_system_flags migration was generated"
 
     assert Rewrite.Source.get(migration, :content) =~
-             "PhoenixFlags.Migration.up(version: #{PhoenixFlags.Migration.current_version()})"
+             "def up, do: PhoenixFlags.Migration.up()\n"
   end
 end

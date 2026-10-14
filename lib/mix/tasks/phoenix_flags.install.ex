@@ -53,11 +53,9 @@ if Code.ensure_loaded?(Igniter) do
         #   label: "Enable Feature",
         #   description: "Toggle this feature on or off."
       """)
-      # The version is pinned: an unpinned up/0 means "latest", so the schema
-      # this migration creates would change with every library upgrade.
       |> Igniter.Libs.Ecto.gen_migration(repo, "create_system_flags",
         body: """
-          def up, do: PhoenixFlags.Migration.up(version: #{PhoenixFlags.Migration.current_version()})
+          def up, do: PhoenixFlags.Migration.up()
           def down, do: PhoenixFlags.Migration.down(version: 1)
         """,
         on_exists: :skip

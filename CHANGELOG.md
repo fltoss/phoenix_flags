@@ -63,8 +63,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   0..100 no longer loads.
 - `update_entry` returns `{:error, :unavailable}` when the Server is not
   running, rather than exiting the caller.
-- `mix phoenix_flags.install` crashed before writing anything; the migration it
-  generates now pins its version.
+- `mix phoenix_flags.install` crashed before writing anything.
 - `mix igniter.upgrade` across several releases generated migrations with one
   version, which Ecto refuses.
 - `Flag.new!/1` refuses a field over 255 characters, which made seeding fail for
