@@ -58,8 +58,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   value that fails to cast returns the caller's default rather than `nil`.
 - A secret's plaintext could reach the logs through the decrypt warning, an
   update's exception, or a crash report.
-- `NaN` and `Infinity` are refused for `:decimal` and `:percentage`; a
-  hand-edited percentage outside 0..100 no longer loads.
+- `NaN` is refused for `:decimal` too, as 0.10.2 did for `:percentage`: it
+  raises on a caller's first comparison. A hand-edited percentage outside
+  0..100 no longer loads.
 - `update_entry` returns `{:error, :unavailable}` when the Server is not
   running, rather than exiting the caller.
 - `mix phoenix_flags.install` crashed before writing anything; the migration it
@@ -87,6 +88,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Reader`. Declarations are looked up by key through generated clauses rather
   than list scans; one `Type.parse/2` serves validation and casting; cache
   writes that would change nothing are skipped; a burst of reloads is one load.
+
+## [0.10.2] - 2026-10-14
+
+### Fixed
+
+- A `percentage` value of `NaN` now fails validation with "must be a valid
+  number" instead of raising `Decimal.Error` from the changeset (and from
+  `PhoenixFlags.Flag.new!/1` when used as a default). Every other value
+  validates exactly as before.
+
+### Changed
+
+- The installation snippet in the README now asks for `~> 0.10` instead of
+  `~> 0.6`.
+- Tested against the latest optional and dev dependencies; `mix.exs`
+  constraints are unchanged. Locked `phoenix` 1.8.13 → 1.8.15,
+  `phoenix_live_view` 1.2.11 → 1.2.12, `phoenix_pubsub` 2.3.0 → 2.4.1,
+  `phoenix_template` 1.0.4 → 1.1.0, `finch` 0.23.0 → 0.24.0, `req` 0.7.4 →
+  0.7.5, plus dev-only `ex_ast`, `makeup`, `sourceror` and `spitfire`.
 
 ## [0.10.1] - 2026-10-14
 

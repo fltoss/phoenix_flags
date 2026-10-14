@@ -95,11 +95,18 @@ defmodule PhoenixFlags.EntryTest do
       refute Entry.changeset(entry("select", "a"), %{"value" => ""}, select_options: [{"A", "a"}]).valid?
     end
 
-    test "rejects NaN and Infinity for a decimal or a percentage" do
-      for type <- ~w(decimal percentage), value <- ~w(NaN Infinity -Infinity) do
-        changeset = Entry.changeset(entry(type, "1"), %{"value" => value})
-        assert {"must be a finite number", _} = changeset.errors[:value], "#{type} #{value}"
+    test "rejects NaN for a decimal or a percentage, which raises on comparison" do
+      for type <- ~w(decimal percentage) do
+        changeset = Entry.changeset(entry(type, "1"), %{"value" => "NaN"})
+        assert {"must be a valid number", _} = changeset.errors[:value], type
       end
+    end
+
+    test "an infinite decimal is a value; an infinite percentage is out of range" do
+      assert Entry.changeset(entry("decimal", "1"), %{"value" => "Infinity"}).valid?
+
+      changeset = Entry.changeset(entry("percentage", "1"), %{"value" => "-Infinity"})
+      assert {"must be between 0 and 100", _} = changeset.errors[:value]
     end
 
     test "accepts \"\" for a secret, as the way to clear it" do

@@ -30,10 +30,10 @@ defmodule PhoenixFlags.Type do
     end
   end
 
-  def parse("decimal", value) when is_binary(value), do: finite(value)
+  def parse("decimal", value) when is_binary(value), do: number(value)
 
   def parse("percentage", value) when is_binary(value) do
-    with {:ok, decimal} <- finite(value) do
+    with {:ok, decimal} <- number(value) do
       if Decimal.compare(decimal, 0) != :lt and Decimal.compare(decimal, 100) != :gt do
         {:ok, decimal}
       else
@@ -57,11 +57,12 @@ defmodule PhoenixFlags.Type do
     end
   end
 
-  # Decimal.parse accepts "NaN" and "Infinity", and a NaN handed to a caller
-  # raises on the first comparison.
-  defp finite(value) do
+  # Decimal.parse/1 accepts "NaN", which raises on the first comparison -- a
+  # percentage's range check, or a caller's. Infinity compares, so a decimal may
+  # be infinite and a percentage is refused by its range.
+  defp number(value) do
     case Decimal.parse(value) do
-      {%Decimal{coef: coef}, ""} when coef in [:NaN, :inf] -> {:error, "must be a finite number"}
+      {%Decimal{coef: :NaN}, ""} -> {:error, "must be a valid number"}
       {decimal, ""} -> {:ok, decimal}
       _other -> {:error, "must be a valid number"}
     end
