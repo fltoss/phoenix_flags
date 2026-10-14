@@ -33,7 +33,7 @@ checks, and a simple API for building admin UIs. One dependency, no external ser
 - **Targeting rules** — force a value for one user, company, or any attribute you
   pass, added from the dashboard without a deploy
 - **Compile-time validation** — `flag/2` macro validates keys, types, and defaults at compile time
-- **Declarative flags** — define flags in code, auto-seeded on startup, stale flags auto-removed
+- **Declarative flags** — define flags in code, auto-seeded on startup, safe across a rolling deploy
 - **Cluster-aware** — writes notify all connected nodes immediately; a periodic
   refresh heals nodes that missed a notification (partition, restart)
 - **Test-friendly** — process dictionary overrides (no DB, no races) + Ecto sandbox helpers
@@ -201,10 +201,15 @@ flag "bad_pct", type: :percentage, default: "150"  # must be 0-100
 On GenServer startup, PhoenixFlags syncs the database with your declarations:
 
 - **New flags** are inserted with their declared defaults
-- **Removed flags** (no longer in code) are deleted from the database
+- **Removed flags** (no longer in code) are **kept**, logged, and marked in the
+  dashboard — during a rolling deploy the old and new releases disagree about
+  which flags exist, and deleting would lose a value an admin had just set.
+  `MyApp.SystemConfig.prune_undeclared()` deletes them, with their targeting
+  rules, once no node declares them
 - **Changed metadata** (label, description, category) is updated automatically
 - **Runtime values are preserved** — if an admin changed a value via the UI, it stays
-- **Type changes reset the value** — if you change a flag from `:boolean` to `:integer`, the old value `"true"` would be invalid, so it's reset to the declared default
+- **Type changes keep a value the new type accepts** — `"5"` survives `:string` to `:integer`; `"true"` would be invalid as an integer, so it is reset to the declared default. A `:secret` on either side always resets
+- **A database that is down at startup does not stop your app** — reads return defaults while the seed and load are retried, with backoff, until they succeed
 
 This means you never write seed migrations. Add a flag, deploy, done.
 
@@ -284,7 +289,8 @@ raises a `PhoenixFlags.Error` at compile time; misconfiguring it (module missing
 ### What the admin UI and audit log show
 
 - Dashboard: "Set" / "Not set" with an Edit button. Editing renders a blank
-  password input — operators type the new value, submit empty to clear it.
+  password input — operators type a new value, and saving it blank keeps the
+  stored one. A separate **Clear** button empties it.
   The ciphertext is never sent to the DOM.
 - Audit log (if enabled): `old_value` and `new_value` are stored as
   `"[redacted]"` when non-empty, and `""` when the secret is cleared. Rotations
@@ -554,9 +560,9 @@ need tighter convergence.
 
 ### One Config Module per Repo
 
-All flags live in a single `system_flags` table, and each config module removes
-keys it doesn't declare at startup. Two config modules with different flag
-declarations sharing one repo would therefore delete each other's rows — the
+All flags live in a single `system_flags` table. Two config modules with
+different flag declarations sharing one repo would overwrite each other's
+metadata, and `prune_undeclared/0` on one would delete the other's flags — the
 server detects this at boot and refuses to start. Run one PhoenixFlags module
 per repo (multiple *nodes* running the same module is, of course, fine).
 
@@ -609,11 +615,12 @@ end
 
 | Helper | Mechanism | Visible to | Use when |
 |---|---|---|---|
-| `stub/2` | Process dictionary | Same process only | Unit tests, context tests |
+| `stub/2` | Process dictionary | The test, and Tasks it starts | Unit tests, context tests |
 | `insert_entry/3` | Database (Ecto sandbox) | All processes in test | LiveView, integration tests |
 
 `stub/2` is faster and simpler. Use `insert_entry/3` only when you need
-cross-process visibility.
+cross-process visibility. `insert_entry/3` takes the type from the flag's declaration
+and encrypts a `:secret` with your encryptor, as a real save would.
 
 ## Versioned Migrations
 
@@ -665,6 +672,9 @@ defmodule MyAppWeb.Router do
 end
 ```
 
+The page refreshes itself every few seconds, so a change made by another admin,
+or on another node, shows up without a reload.
+
 > **The dashboard has no built-in authentication.** It renders and edits every
 > flag for anyone who can reach the route — including `:secret` values, which are
 > write-only in the UI but whose changes are still actor-attributed in the audit
@@ -676,12 +686,14 @@ Visit `/admin/flags` to see all your flags grouped by category with:
 - Toggle switches for booleans, which save on click
 - An **Edit dialog** for every other type, opened from the row
 - Percentage bars for `:variant` flags, with a weights editor and a live total
-- `Set` / `Not set` for `:secret` flags, edited through a blank password field
+- `Set` / `Not set` for `:secret` flags, edited through a blank password field —
+  saving it blank keeps the stored secret; **Clear** empties it
 - Validation errors shown in the dialog, which stays open until the value is valid
 - Dark mode support (via `prefers-color-scheme`)
 
 The dialog closes on **Save**, **Cancel**, the **×**, **Escape**, or a click on
-the backdrop. Keyboard focus moves into the dialog when it opens.
+the backdrop. Keyboard focus moves into the dialog when it opens, stays inside it,
+and returns to the Edit button when it closes.
 
 ### Dashboard Options
 
@@ -690,7 +702,8 @@ flags_dashboard "/flags",
   config: MyApp.SystemConfig,                              # required
   on_mount: [{MyAppWeb.AdminAuth, :ensure_authenticated}], # auth hooks
   app_js_type: "module",                                   # if your bundle is ESM
-  favicon: "/favicon.svg"                                  # defaults to no request
+  favicon: "/favicon.svg",                                 # defaults to no request
+  csp_nonce_assign_key: :csp_nonce                         # your CSP nonce assign
 ```
 
 > **If your bundle is ESM, you must pass `app_js_type: "module"`.** esbuild's
@@ -704,8 +717,16 @@ flags_dashboard "/flags",
 |---|---|
 | `:config` (required) | The module that `use PhoenixFlags` |
 | `:on_mount` | List of `on_mount` hooks for the live session (e.g. authentication) |
-| `:live_socket_path` | Defaults to `"/live"` |
 | `:app_js` | Path to the app's JS bundle. Defaults to `"/assets/js/app.js"` |
+| `:app_js_type` | The script tag's `type`. Pass `"module"` for an ESM bundle |
+| `:favicon` | The page's icon. Defaults to `"data:,"`, so the browser asks for nothing |
+| `:csp_nonce_assign_key` | The conn assign holding your CSP nonce; the script tag carries it |
+
+`:live_socket_path` is deprecated: it never had an effect, since the socket path
+is whatever your `app.js` connects to.
+
+The stylesheet is served from the page's own route, and the variant bars are
+SVG, so the page needs no `'unsafe-inline'` for styles.
 
 ### How It Works
 
@@ -786,6 +807,9 @@ MyApp.SystemConfig.audit_log()
 
 MyApp.SystemConfig.audit_log("enable_benefits")
 #=> [%PhoenixFlags.AuditLog{...}, ...]  # filtered by key
+
+MyApp.SystemConfig.audit_log(limit: 50)                    # the newest 50
+MyApp.SystemConfig.audit_log("enable_benefits", limit: 10)
 ```
 
 ### Passing Actor from Code
@@ -827,10 +851,10 @@ MyApp.SystemConfig.update_entry("enable_benefits", %{"value" => "true"},
 | `variant(key, identity, opts \\ [])` | Variant assigned to `identity`. Accepts `:default`, `:telemetry`. |
 | `variants(key)` | Declared `{label, value, weight}` variants for a `:variant` flag, or `[]` |
 | `targets(key)` | Targeting rules for a flag, in evaluation order |
-| `put_target(key, attrs)` | Add a targeting rule (`:conditions`, `:value`, optional `:position`) |
-| `delete_target(id)` | Delete a targeting rule |
-| `audit_log()` | All audit entries, newest first (requires `audit: true`) |
-| `audit_log(key)` | Audit entries for a specific key, newest first |
+| `put_target(key, attrs, opts \\ [])` | Add a targeting rule (`:conditions`, `:value`, optional `:position`); `actor:` for the audit log |
+| `delete_target(id, opts \\ [])` | Delete a targeting rule; `actor:` for the audit log |
+| `audit_log(key_or_opts \\ [])` | Audit entries, newest first: every key's, or one key's; `limit:` caps them (requires `audit: true`) |
+| `prune_undeclared()` | Delete stored flags no longer declared, with their rules |
 
 ### Test API (generated in `:test` env as `MyModule.Test`)
 

@@ -69,7 +69,8 @@ defmodule PhoenixFlags.UI.DashboardLiveTest do
     test "carries the type through from the router option" do
       # The option has to survive `__options__/1`, the generated pipeline and
       # the plug that assigns it — four hops, any of which could drop it.
-      assert {_session, _pipeline, _session_opts, _route_opts, "/x.js", "module", "/i.svg"} =
+      assert {_session, _pipeline, _session_opts,
+              %{app_js: "/x.js", app_js_type: "module", favicon: "/i.svg"}} =
                PhoenixFlags.Router.__options__(
                  config: PhoenixFlags.TestConfig,
                  app_js: "/x.js",
@@ -77,8 +78,44 @@ defmodule PhoenixFlags.UI.DashboardLiveTest do
                  favicon: "/i.svg"
                )
 
-      assert {_session, _pipeline, _session_opts, _route_opts, "/assets/js/app.js", nil, "data:,"} =
+      assert {_session, _pipeline, _session_opts,
+              %{app_js: "/assets/js/app.js", app_js_type: nil, favicon: "data:,"}} =
                PhoenixFlags.Router.__options__(config: PhoenixFlags.TestConfig)
+    end
+
+    test "carries the host's CSP nonce onto the script tag" do
+      {_session, _pipeline, _session_opts, page_opts} =
+        PhoenixFlags.Router.__options__(
+          config: PhoenixFlags.TestConfig,
+          csp_nonce_assign_key: :csp_nonce
+        )
+
+      conn =
+        Phoenix.ConnTest.build_conn()
+        |> Plug.Conn.assign(:csp_nonce, "n0nce")
+        |> PhoenixFlags.Router.__assign_page__(page_opts)
+
+      html =
+        render_component(&PhoenixFlags.UI.Layouts.root/1,
+          app_js: conn.assigns.app_js,
+          phoenix_flags_csp_nonce: conn.assigns.phoenix_flags_csp_nonce,
+          css_path: "/flags/css-abc",
+          inner_content: {:safe, ""}
+        )
+
+      assert html =~ ~s(nonce="n0nce")
+    end
+
+    test "warns that :live_socket_path does nothing" do
+      warning =
+        ExUnit.CaptureIO.capture_io(:stderr, fn ->
+          PhoenixFlags.Router.__options__(
+            config: PhoenixFlags.TestConfig,
+            live_socket_path: "/live"
+          )
+        end)
+
+      assert warning =~ ":live_socket_path never had an effect"
     end
   end
 
@@ -1069,6 +1106,30 @@ defmodule PhoenixFlags.UI.DashboardLiveTest do
       # A change event must not write.
       assert TestRepo.get_by!(Entry, key: "checkout_flow").value == "control=90,new_flow=10"
     end
+
+    test "adding a rule keeps the weights being edited", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/variant-flags")
+
+      view |> element(~s(button[phx-value-key="checkout_flow"])) |> render_click()
+
+      view
+      |> element("#pf-form-checkout_flow")
+      |> render_change(%{"entry" => %{"variants" => %{"control" => "70", "new_flow" => "10"}}})
+
+      html =
+        view
+        |> element("#pf-target-form-checkout_flow")
+        |> render_submit(%{
+          "target" => %{
+            "attribute" => "c",
+            "operator" => "in",
+            "values" => "1",
+            "value" => "control"
+          }
+        })
+
+      assert html =~ "Total 80%"
+    end
   end
 
   describe "secret" do
@@ -1122,6 +1183,81 @@ defmodule PhoenixFlags.UI.DashboardLiveTest do
       assert html =~ ~s(type="password")
       assert html =~ ~s(autocomplete="new-password")
       refute html =~ ~s(value="some-cipher")
+    end
+  end
+
+  describe "secrets, refresh, ids and forged events" do
+    defp insert_entry!(key, type, value) do
+      TestRepo.insert!(%Entry{key: key, value: value, type: type, category: "system", label: key})
+    end
+
+    test "a blank save keeps the stored secret, and Clear empties it", %{conn: conn} do
+      insert_entry!("api_key", "secret", "stored-cipher")
+      {:ok, view, _html} = live(conn, "/flags")
+
+      view |> element(~s(button[phx-value-key="api_key"])) |> render_click()
+      html = view |> element("#pf-form-api_key") |> render_submit(%{"entry" => %{"value" => ""}})
+
+      assert html =~ "Kept the stored secret"
+      assert TestRepo.get_by!(Entry, key: "api_key").value == "stored-cipher"
+
+      view |> element(~s(button[phx-value-key="api_key"])) |> render_click()
+      view |> element(~s(button[phx-click="pf-clear-secret"])) |> render_click()
+
+      assert TestRepo.get_by!(Entry, key: "api_key").value == ""
+    end
+
+    test "a change made elsewhere shows up without a reload", %{conn: conn} do
+      import Ecto.Query, only: [from: 2]
+
+      insert_entry!("motd", "string", "hello")
+      {:ok, view, _html} = live(conn, "/flags")
+
+      TestRepo.update_all(from(e in Entry, where: e.key == "motd"),
+        set: [value: "changed elsewhere"]
+      )
+
+      send(view.pid, :pf_refresh)
+
+      assert render(view) =~ "changed elsewhere"
+    end
+
+    test "a key that is not a valid DOM id still gets one, and its dialog opens", %{conn: conn} do
+      insert_entry!("billing.enabled v2", "string", "x")
+      {:ok, view, _html} = live(conn, "/flags")
+
+      view |> element(~s(button[phx-value-key="billing.enabled v2"])) |> render_click()
+      id = PhoenixFlags.UI.Components.dom_id("pf-form", "billing.enabled v2")
+
+      assert id =~ ~r/\A[A-Za-z0-9_-]+\z/
+      assert has_element?(view, "##{id}")
+    end
+
+    test "a forged delete of a rule on another flag is ignored", %{conn: conn} do
+      insert_entry!("motd", "string", "hello")
+      insert_entry!("other", "string", "x")
+
+      {:ok, other_rule} =
+        TestConfig.put_target("other",
+          value: "forced",
+          conditions: [[attribute: :c, operator: :in, values: [1]]]
+        )
+
+      {:ok, view, _html} = live(conn, "/flags")
+      view |> element(~s(button[phx-value-key="motd"])) |> render_click()
+      render_click(view, "pf-delete-target", %{"target-id" => other_rule.id})
+
+      assert [_still_there] = TestConfig.targets("other")
+    end
+
+    test "an entry param that is not a map is ignored, not a crash", %{conn: conn} do
+      insert_entry!("motd", "string", "hello")
+      {:ok, view, _html} = live(conn, "/flags")
+
+      render_click(view, "pf-validate", %{"key" => "motd", "entry" => "x"})
+      render_click(view, "pf-save", %{"key" => "motd", "entry" => "x"})
+
+      assert render(view) =~ "System Flags"
     end
   end
 end
