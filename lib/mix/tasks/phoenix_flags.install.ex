@@ -53,18 +53,20 @@ if Code.ensure_loaded?(Igniter) do
         #   label: "Enable Feature",
         #   description: "Toggle this feature on or off."
       """)
+      # The version is pinned: an unpinned up/0 means "latest", so the schema
+      # this migration creates would change with every library upgrade.
       |> Igniter.Libs.Ecto.gen_migration(repo, "create_system_flags",
         body: """
-          def up, do: PhoenixFlags.Migration.up()
+          def up, do: PhoenixFlags.Migration.up(version: #{PhoenixFlags.Migration.current_version()})
           def down, do: PhoenixFlags.Migration.down(version: 1)
-        """
+        """,
+        on_exists: :skip
       )
       |> Igniter.Project.Config.configure_new(
+        "test.exs",
         otp_app,
-        module_name,
-        [:cache_enabled],
-        false,
-        file: "test.exs"
+        [module_name, :cache_enabled],
+        false
       )
       |> Igniter.Project.Application.add_new_child(module_name)
     end
